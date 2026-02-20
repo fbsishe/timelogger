@@ -1,0 +1,135 @@
+@page "/timelog-sync"
+@rendermode InteractiveServer
+@inject ITimelogDataService TimelogDataService
+@inject ISnackbar Snackbar
+
+<PageTitle>Timelog Sync – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-2">Timelog Sync</MudText>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4" Spacing="3">
+    <MudText Typo="Typo.body1">
+        Last synced:
+        <b>@(_lastSyncedAt.HasValue ? _lastSyncedAt.Value.ToLocalTime().ToString("f") : "Never")</b>
+    </MudText>
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Sync"
+               OnClick="SyncNowAsync" Disabled="@_syncing">
+        @(_syncing ? "Syncing…" : "Sync Now")
+    </MudButton>
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+               OnClick="LoadAsync">Refresh</MudButton>
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_projects.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">
+        No projects synced yet. Click <b>Sync Now</b> to pull data from Timelog.
+    </MudAlert>
+}
+else
+{
+    <MudText Typo="Typo.h6" Class="mb-2">@_projects.Count Projects</MudText>
+    <MudTable Items="_projects" Hover="true" Dense="true" Striped="true" Elevation="1"
+              RowsPerPage="50">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>External ID</MudTh>
+            <MudTh>Active</MudTh>
+            <MudTh>Tasks</MudTh>
+            <MudTh>Last Synced</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Name</MudTd>
+            <MudTd>@context.ExternalId</MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small"
+                         Color="@(context.IsActive ? Color.Success : Color.Default)">
+                    @(context.IsActive ? "Active" : "Inactive")
+                </MudChip>
+            </MudTd>
+            <MudTd>@context.TaskCount</MudTd>
+            <MudTd>@context.LastSyncedAt.ToLocalTime().ToString("g")</MudTd>
+            <MudTd>
+                @if (context.TaskCount > 0)
+                {
+                    <MudButton Variant="Variant.Text" Size="Size.Small"
+                               OnClick="@(() => ShowTasksAsync(context))">
+                        View Tasks
+                    </MudButton>
+                }
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+
+    @if (_selectedProject is not null)
+    {
+        <MudText Typo="Typo.h6" Class="mt-4 mb-2">
+            Tasks in <b>@_selectedProject.Name</b> (@_tasks.Count)
+        </MudText>
+        <MudTable Items="_tasks" Dense="true" Hover="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>External ID</MudTh>
+                <MudTh>Active</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Name</MudTd>
+                <MudTd>@context.ExternalId</MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.IsActive ? Color.Success : Color.Default)">
+                        @(context.IsActive ? "Active" : "Inactive")
+                    </MudChip>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private bool _syncing;
+    private DateTimeOffset? _lastSyncedAt;
+    private List<TimelogProjectSummary> _projects = [];
+    private List<TimelogTaskSummary> _tasks = [];
+    private TimelogProjectSummary? _selectedProject;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _selectedProject = null;
+        _tasks = [];
+        var projectsTask = TimelogDataService.GetProjectsAsync();
+        var syncTask = TimelogDataService.GetLastSyncedAtAsync();
+        await Task.WhenAll(projectsTask, syncTask);
+        _projects = (await projectsTask).ToList();
+        _lastSyncedAt = await syncTask;
+        _loading = false;
+    }
+
+    private async Task SyncNowAsync()
+    {
+        _syncing = true;
+        await TimelogDataService.TriggerSyncAsync();
+        Snackbar.Add("Sync job enqueued. Refresh in a moment to see updated data.", Severity.Success);
+        _syncing = false;
+    }
+
+    private async Task ShowTasksAsync(TimelogProjectSummary project)
+    {
+        _selectedProject = project;
+        _tasks = (await TimelogDataService.GetTasksByProjectAsync(project.Id)).ToList();
+    }
+}

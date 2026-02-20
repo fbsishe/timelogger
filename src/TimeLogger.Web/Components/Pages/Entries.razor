@@ -1,0 +1,179 @@
+@page "/entries"
+@rendermode InteractiveServer
+@inject IEntryService EntryService
+@inject ITimelogDataService TimelogDataService
+@inject ISnackbar Snackbar
+
+<PageTitle>Entries – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">All Entries</MudText>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3" Spacing="2">
+    <MudChipSet T="string" SelectionMode="SelectionMode.SingleSelection"
+                SelectedValue="_statusFilter"
+                SelectedValueChanged="@((v) => { _statusFilter = v ?? "All"; })">
+        <MudChip T="string" Value="@("All")" Color="Color.Default" Default="true">All</MudChip>
+        <MudChip T="string" Value="@("Pending")" Color="Color.Warning">Pending</MudChip>
+        <MudChip T="string" Value="@("Failed")" Color="Color.Error">Failed</MudChip>
+        <MudChip T="string" Value="@("Mapped")" Color="Color.Info">Mapped</MudChip>
+        <MudChip T="string" Value="@("Submitted")" Color="Color.Success">Submitted</MudChip>
+        <MudChip T="string" Value="@("Ignored")" Color="Color.Default">Ignored</MudChip>
+    </MudChipSet>
+    <MudSpacer />
+    <MudText Typo="Typo.body2" Color="Color.Secondary">@_totalCount total entries</MudText>
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudTable Items="@FilteredEntries" Hover="true" Dense="true" Striped="true" Elevation="1"
+              RowsPerPage="50">
+        <HeaderContent>
+            <MudTh>Date</MudTh>
+            <MudTh>Source</MudTh>
+            <MudTh>Issue Key</MudTh>
+            <MudTh>Project Key</MudTh>
+            <MudTh>Description</MudTh>
+            <MudTh>Hours</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+            <MudTd>@context.SourceName</MudTd>
+            <MudTd>@context.IssueKey</MudTd>
+            <MudTd>@context.ProjectKey</MudTd>
+            <MudTd Style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                @context.Description
+            </MudTd>
+            <MudTd>@context.Hours</MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)">
+                    @context.Status
+                </MudChip>
+            </MudTd>
+            <MudTd>
+                @if (context.Status is "Pending" or "Failed")
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               OnClick="@(() => OpenMapDialog(context))">
+                        Map
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Secondary"
+                               OnClick="@(() => IgnoreAsync(context.Id))">
+                        Ignore
+                    </MudButton>
+                }
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+}
+
+@* Quick-map dialog *@
+<MudDialog @bind-IsVisible="_mapDialogOpen">
+    <TitleContent>Map Entry</TitleContent>
+    <DialogContent>
+        @if (_mapTarget is not null)
+        {
+            <MudText Class="mb-2">
+                <b>@_mapTarget.IssueKey</b> – @_mapTarget.Description (@_mapTarget.WorkDate.ToString("yyyy-MM-dd"))
+            </MudText>
+            <MudSelect T="int?" Label="Project" @bind-Value="_selectedProjectId"
+                       Required="true" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+                @foreach (var p in _projects)
+                {
+                    <MudSelectItem T="int?" Value="@p.Id">@p.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="int?" Label="Task (optional)" @bind-Value="_selectedTaskId"
+                       AnchorOrigin="Origin.BottomLeft">
+                <MudSelectItem T="int?" Value="@((int?)null)">— none —</MudSelectItem>
+                @foreach (var t in _tasks)
+                {
+                    <MudSelectItem T="int?" Value="@t.Id">@t.Name</MudSelectItem>
+                }
+            </MudSelect>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _mapDialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_selectedProjectId is null)"
+                   OnClick="SaveMapAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private List<EntryListItem> _allEntries = [];
+    private int _totalCount;
+    private string _statusFilter = "All";
+
+    private IEnumerable<EntryListItem> FilteredEntries =>
+        _statusFilter == "All" ? _allEntries : _allEntries.Where(e => e.Status == _statusFilter);
+
+    private List<TimelogProjectSummary> _projects = [];
+    private List<TimelogTaskSummary> _tasks = [];
+    private bool _mapDialogOpen;
+    private EntryListItem? _mapTarget;
+    private int? _selectedProjectId;
+    private int? _selectedTaskId;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var allTask = EntryService.GetAllAsync(1, 5000);
+        var countTask = EntryService.GetTotalCountAsync();
+        var projectsTask = TimelogDataService.GetProjectsAsync();
+        await Task.WhenAll(allTask, countTask, projectsTask);
+
+        _allEntries = (await allTask).ToList();
+        _totalCount = await countTask;
+        _projects = (await projectsTask).ToList();
+        _loading = false;
+    }
+
+    private async Task OpenMapDialog(EntryListItem entry)
+    {
+        _mapTarget = entry;
+        _selectedProjectId = null;
+        _selectedTaskId = null;
+        _tasks = [];
+        _mapDialogOpen = true;
+    }
+
+    private async Task SaveMapAsync()
+    {
+        if (_mapTarget is null || _selectedProjectId is null) return;
+        await EntryService.ManualMapAsync(_mapTarget.Id, _selectedProjectId.Value, _selectedTaskId);
+        _mapDialogOpen = false;
+        Snackbar.Add("Entry mapped.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task IgnoreAsync(int id)
+    {
+        await EntryService.IgnoreAsync(id);
+        Snackbar.Add("Entry ignored.", Severity.Info);
+        await LoadAsync();
+    }
+
+    private static Color StatusColor(string status) => status switch
+    {
+        "Pending"   => Color.Warning,
+        "Failed"    => Color.Error,
+        "Mapped"    => Color.Info,
+        "Submitted" => Color.Success,
+        _           => Color.Default,
+    };
+}

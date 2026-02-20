@@ -1,0 +1,127 @@
+@page "/import-history"
+@rendermode InteractiveServer
+@inject IImportSourceService ImportSourceService
+@inject ISnackbar Snackbar
+
+<PageTitle>Import History – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Import History</MudText>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3" Spacing="3">
+    <MudSelect T="int" Label="Period" Value="_days"
+               ValueChanged="@(async (v) => { _days = v; await LoadAsync(); })"
+               Style="max-width:180px" AnchorOrigin="Origin.BottomLeft">
+        <MudSelectItem T="int" Value="7">Last 7 days</MudSelectItem>
+        <MudSelectItem T="int" Value="14">Last 14 days</MudSelectItem>
+        <MudSelectItem T="int" Value="30">Last 30 days</MudSelectItem>
+        <MudSelectItem T="int" Value="90">Last 90 days</MudSelectItem>
+    </MudSelect>
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+               OnClick="LoadAsync">Refresh</MudButton>
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.PlayArrow"
+               OnClick="PollNowAsync" Disabled="@_polling">
+        @(_polling ? "Polling…" : "Poll Now")
+    </MudButton>
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_history.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No import history found for the selected period.</MudAlert>
+}
+else
+{
+    <MudTable Items="_history" Hover="true" Dense="true" Striped="true" Elevation="1">
+        <HeaderContent>
+            <MudTh>Date</MudTh>
+            <MudTh>Source</MudTh>
+            <MudTh Style="text-align:right">Total</MudTh>
+            <MudTh Style="text-align:right">Pending</MudTh>
+            <MudTh Style="text-align:right">Mapped</MudTh>
+            <MudTh Style="text-align:right">Submitted</MudTh>
+            <MudTh Style="text-align:right">Failed</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+            <MudTd>@context.SourceName</MudTd>
+            <MudTd Style="text-align:right">@context.Total</MudTd>
+            <MudTd Style="text-align:right">
+                @if (context.Pending > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">@context.Pending</MudChip>
+                }
+                else
+                {
+                    @:—
+                }
+            </MudTd>
+            <MudTd Style="text-align:right">
+                @if (context.Mapped > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.Mapped</MudChip>
+                }
+                else
+                {
+                    @:—
+                }
+            </MudTd>
+            <MudTd Style="text-align:right">
+                @if (context.Submitted > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success">@context.Submitted</MudChip>
+                }
+                else
+                {
+                    @:—
+                }
+            </MudTd>
+            <MudTd Style="text-align:right">
+                @if (context.Failed > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error">@context.Failed</MudChip>
+                }
+                else
+                {
+                    @:—
+                }
+            </MudTd>
+        </RowTemplate>
+        <FooterContent>
+            <MudTd colspan="2"><b>Totals</b></MudTd>
+            <MudTd Style="text-align:right"><b>@_history.Sum(h => h.Total)</b></MudTd>
+            <MudTd Style="text-align:right"><b>@_history.Sum(h => h.Pending)</b></MudTd>
+            <MudTd Style="text-align:right"><b>@_history.Sum(h => h.Mapped)</b></MudTd>
+            <MudTd Style="text-align:right"><b>@_history.Sum(h => h.Submitted)</b></MudTd>
+            <MudTd Style="text-align:right"><b>@_history.Sum(h => h.Failed)</b></MudTd>
+        </FooterContent>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _polling;
+    private int _days = 30;
+    private List<ImportHistoryEntry> _history = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _history = (await ImportSourceService.GetImportHistoryAsync(_days)).ToList();
+        _loading = false;
+    }
+
+    private async Task PollNowAsync()
+    {
+        _polling = true;
+        await ImportSourceService.TriggerPollAllAsync();
+        Snackbar.Add("Poll job enqueued. Check back in a moment.", Severity.Success);
+        _polling = false;
+    }
+}

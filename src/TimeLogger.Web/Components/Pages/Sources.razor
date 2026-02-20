@@ -1,0 +1,185 @@
+@page "/sources"
+@rendermode InteractiveServer
+@inject IImportSourceService ImportSourceService
+@inject ISnackbar Snackbar
+
+<PageTitle>Import Sources – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Import Sources</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mb-3"
+               StartIcon="@Icons.Material.Filled.Add"
+               OnClick="OpenCreateDialog">
+        Add Source
+    </MudButton>
+
+    @if (_sources.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No import sources configured yet.</MudAlert>
+    }
+    else
+    {
+        <MudTable Items="_sources" Hover="true" Dense="true" Striped="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Base URL</MudTh>
+                <MudTh>Schedule</MudTh>
+                <MudTh>Enabled</MudTh>
+                <MudTh>Last Polled</MudTh>
+                <MudTh>Entries</MudTh>
+                <MudTh>Pending</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Name</MudTd>
+                <MudTd>@context.SourceType</MudTd>
+                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.BaseUrl
+                </MudTd>
+                <MudTd>@(context.PollSchedule ?? "—")</MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.IsEnabled ? Color.Success : Color.Default)">
+                        @(context.IsEnabled ? "Yes" : "No")
+                    </MudChip>
+                </MudTd>
+                <MudTd>
+                    @(context.LastPolledAt.HasValue
+                        ? context.LastPolledAt.Value.ToLocalTime().ToString("g")
+                        : "Never")
+                </MudTd>
+                <MudTd>@context.TotalEntries</MudTd>
+                <MudTd>
+                    @if (context.PendingEntries > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning">
+                            @context.PendingEntries
+                        </MudChip>
+                    }
+                    else
+                    {
+                        @:0
+                    }
+                </MudTd>
+                <MudTd>
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                   OnClick="@(() => OpenEditDialog(context))" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                   Color="Color.Error"
+                                   OnClick="@(() => DeleteAsync(context.Id))" />
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@* Add / Edit dialog *@
+<MudDialog @bind-IsVisible="_dialogOpen">
+    <TitleContent>@(_editingId.HasValue ? "Edit Source" : "Add Source")</TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_form.Name" Label="Name" Required="true" Class="mb-3" />
+        <MudSelect T="TimeLogger.Domain.SourceType" Label="Source Type"
+                   @bind-Value="_form.SourceType" AnchorOrigin="Origin.BottomLeft" Class="mb-3"
+                   Disabled="@_editingId.HasValue">
+            <MudSelectItem T="TimeLogger.Domain.SourceType" Value="TimeLogger.Domain.SourceType.Tempo">Tempo</MudSelectItem>
+            <MudSelectItem T="TimeLogger.Domain.SourceType" Value="TimeLogger.Domain.SourceType.FileUpload">File Upload</MudSelectItem>
+        </MudSelect>
+        <MudTextField @bind-Value="_form.BaseUrl" Label="Base URL"
+                      HelperText="e.g. https://api.tempo.io/4" Class="mb-3" />
+        <MudTextField @bind-Value="_form.ApiToken" Label="API Token"
+                      InputType="InputType.Password"
+                      HelperText="@(_editingId.HasValue ? "Leave blank to keep existing token" : "")"
+                      Class="mb-3" />
+        <MudTextField @bind-Value="_form.PollSchedule" Label="Poll Schedule (Cron)"
+                      HelperText="e.g. 0 6 * * * (daily at 06:00). Leave blank for default." Class="mb-3" />
+        @if (_editingId.HasValue)
+        {
+            <MudSwitch T="bool" @bind-Value="_form.IsEnabled" Label="Enabled" Color="Color.Primary" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _dialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private List<ImportSourceDto> _sources = [];
+    private bool _dialogOpen;
+    private int? _editingId;
+    private SourceFormModel _form = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _sources = (await ImportSourceService.GetAllAsync()).ToList();
+        _loading = false;
+    }
+
+    private void OpenCreateDialog()
+    {
+        _editingId = null;
+        _form = new SourceFormModel();
+        _dialogOpen = true;
+    }
+
+    private void OpenEditDialog(ImportSourceDto source)
+    {
+        _editingId = source.Id;
+        _form = new SourceFormModel
+        {
+            Name = source.Name,
+            SourceType = source.SourceType,
+            BaseUrl = source.BaseUrl ?? "",
+            PollSchedule = source.PollSchedule ?? "",
+            IsEnabled = source.IsEnabled,
+        };
+        _dialogOpen = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_editingId.HasValue)
+        {
+            await ImportSourceService.UpdateAsync(
+                _editingId.Value, _form.Name, _form.BaseUrl, _form.ApiToken,
+                _form.PollSchedule, _form.IsEnabled);
+            Snackbar.Add("Source updated.", Severity.Success);
+        }
+        else
+        {
+            await ImportSourceService.CreateAsync(
+                _form.Name, _form.SourceType, _form.BaseUrl, _form.ApiToken, _form.PollSchedule);
+            Snackbar.Add("Source created.", Severity.Success);
+        }
+        _dialogOpen = false;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        await ImportSourceService.DeleteAsync(id);
+        Snackbar.Add("Source deleted.", Severity.Info);
+        await LoadAsync();
+    }
+
+    private class SourceFormModel
+    {
+        public string Name { get; set; } = "";
+        public TimeLogger.Domain.SourceType SourceType { get; set; } = TimeLogger.Domain.SourceType.Tempo;
+        public string BaseUrl { get; set; } = "";
+        public string? ApiToken { get; set; }
+        public string? PollSchedule { get; set; }
+        public bool IsEnabled { get; set; } = true;
+    }
+}

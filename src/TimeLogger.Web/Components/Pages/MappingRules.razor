@@ -1,0 +1,254 @@
+@page "/mapping-rules"
+@rendermode InteractiveServer
+@inject IMappingRuleService MappingRuleService
+@inject ITimelogDataService TimelogDataService
+@inject IEntryService EntryService
+@inject ISnackbar Snackbar
+
+<PageTitle>Mapping Rules – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Mapping Rules</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mb-3"
+               StartIcon="@Icons.Material.Filled.Add"
+               OnClick="OpenCreateDialog">
+        New Rule
+    </MudButton>
+
+    <MudTable Items="_rules" Hover="true" Dense="true" Striped="true" Elevation="1">
+        <HeaderContent>
+            <MudTh>Priority</MudTh>
+            <MudTh>Name</MudTh>
+            <MudTh>Source</MudTh>
+            <MudTh>Match</MudTh>
+            <MudTh>→ Project / Task</MudTh>
+            <MudTh>Enabled</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.KeyboardArrowUp" Size="Size.Small"
+                               OnClick="@(() => MoveAsync(context.Id, -1))" />
+                @context.Priority
+                <MudIconButton Icon="@Icons.Material.Filled.KeyboardArrowDown" Size="Size.Small"
+                               OnClick="@(() => MoveAsync(context.Id, 1))" />
+            </MudTd>
+            <MudTd>@context.Name</MudTd>
+            <MudTd>@(context.SourceType.HasValue ? context.SourceType.Value.ToString() : "All")</MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">@context.MatchField</MudChip>
+                @context.MatchOperator
+                <b>@context.MatchValue</b>
+            </MudTd>
+            <MudTd>
+                @context.TimelogProjectName
+                @if (context.TimelogTaskName is not null)
+                {
+                    <MudText Inline="true" Typo="Typo.caption"> / @context.TimelogTaskName</MudText>
+                }
+            </MudTd>
+            <MudTd>
+                <MudSwitch T="bool" Value="@context.IsEnabled"
+                           ValueChanged="@(v => SetEnabledAsync(context.Id, v))"
+                           Color="Color.Primary" />
+            </MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Science" Size="Size.Small"
+                               OnClick="@(() => TestRuleAsync(context.Id))"
+                               Title="Test rule" />
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                               OnClick="@(() => OpenEditDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                               Color="Color.Error"
+                               OnClick="@(() => DeleteAsync(context.Id))" />
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@* Test result panel *@
+@if (_testResults is not null)
+{
+    <MudPaper Class="mt-4 pa-4" Elevation="1">
+        <MudText Typo="Typo.h6">
+            Test Results — @_testResults.Count matching pending entries
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                           OnClick="@(() => _testResults = null)" />
+        </MudText>
+        @if (_testResults.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">No pending entries match this rule.</MudAlert>
+        }
+        else
+        {
+            <MudTable Items="_testResults" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Date</MudTh>
+                    <MudTh>Issue Key</MudTh>
+                    <MudTh>Description</MudTh>
+                    <MudTh>Hours</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                    <MudTd>@context.IssueKey</MudTd>
+                    <MudTd>@context.Description</MudTd>
+                    <MudTd>@context.Hours</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudPaper>
+}
+
+@* Create / Edit dialog *@
+<MudDialog @bind-IsVisible="_dialogOpen">
+    <TitleContent>@(_editingId.HasValue ? "Edit Rule" : "New Rule")</TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_form.Name" Label="Rule Name" Required="true" Class="mb-3" />
+        <MudSelect T="TimeLogger.Domain.SourceType?" Label="Source Type (blank = all)"
+                   @bind-Value="_form.SourceType" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+            <MudSelectItem T="TimeLogger.Domain.SourceType?" Value="@null">All sources</MudSelectItem>
+            <MudSelectItem T="TimeLogger.Domain.SourceType?" Value="@TimeLogger.Domain.SourceType.Tempo">Tempo</MudSelectItem>
+            <MudSelectItem T="TimeLogger.Domain.SourceType?" Value="@TimeLogger.Domain.SourceType.FileUpload">FileUpload</MudSelectItem>
+        </MudSelect>
+        <MudTextField @bind-Value="_form.MatchField" Label="Match Field"
+                      HelperText="ProjectKey | IssueKey | UserEmail | Description | Activity | metadata.key"
+                      Required="true" Class="mb-3" />
+        <MudSelect T="TimeLogger.Domain.MatchOperator" Label="Operator"
+                   @bind-Value="_form.MatchOperator" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Equals">Equals</MudSelectItem>
+            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Contains">Contains</MudSelectItem>
+            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.StartsWith">StartsWith</MudSelectItem>
+            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Regex">Regex</MudSelectItem>
+        </MudSelect>
+        <MudTextField @bind-Value="_form.MatchValue" Label="Match Value" Required="true" Class="mb-3" />
+        <MudSelect T="int" Label="Project" @bind-Value="_form.TimelogProjectId"
+                   Required="true" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+            @foreach (var p in _projects)
+            {
+                <MudSelectItem T="int" Value="@p.Id">@p.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="int?" Label="Task (optional)" @bind-Value="_form.TimelogTaskId"
+                   AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+            <MudSelectItem T="int?" Value="@((int?)null)">— none —</MudSelectItem>
+            @foreach (var t in _tasks)
+            {
+                <MudSelectItem T="int?" Value="@t.Id">@t.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudNumericField @bind-Value="_form.Priority" Label="Priority" Min="1" Class="mb-3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _dialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private List<MappingRuleDto> _rules = [];
+    private List<TimelogProjectSummary> _projects = [];
+    private List<TimelogTaskSummary> _tasks = [];
+    private List<EntryListItem>? _testResults;
+
+    private bool _dialogOpen;
+    private int? _editingId;
+    private RuleFormModel _form = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var rulesTask = MappingRuleService.GetAllAsync();
+        var projectsTask = TimelogDataService.GetProjectsAsync();
+        await Task.WhenAll(rulesTask, projectsTask);
+        _rules = (await rulesTask).ToList();
+        _projects = (await projectsTask).ToList();
+        _loading = false;
+    }
+
+    private void OpenCreateDialog()
+    {
+        _editingId = null;
+        _form = new RuleFormModel { Priority = (_rules.Count > 0 ? _rules.Max(r => r.Priority) + 1 : 1) };
+        _tasks = [];
+        _dialogOpen = true;
+    }
+
+    private void OpenEditDialog(MappingRuleDto rule)
+    {
+        _editingId = rule.Id;
+        _form = new RuleFormModel
+        {
+            Name = rule.Name,
+            SourceType = rule.SourceType,
+            MatchField = rule.MatchField,
+            MatchOperator = rule.MatchOperator,
+            MatchValue = rule.MatchValue,
+            TimelogProjectId = rule.TimelogProjectId,
+            TimelogTaskId = rule.TimelogTaskId,
+            Priority = rule.Priority,
+        };
+        _tasks = [];
+        _dialogOpen = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        var req = new CreateMappingRuleRequest(
+            _form.Name, _form.SourceType, _form.MatchField, _form.MatchOperator,
+            _form.MatchValue, _form.TimelogProjectId, _form.TimelogTaskId, _form.Priority);
+
+        if (_editingId.HasValue)
+            await MappingRuleService.UpdateAsync(_editingId.Value, req);
+        else
+            await MappingRuleService.CreateAsync(req);
+
+        _dialogOpen = false;
+        Snackbar.Add("Rule saved.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        await MappingRuleService.DeleteAsync(id);
+        Snackbar.Add("Rule deleted.", Severity.Info);
+        await LoadAsync();
+    }
+
+    private async Task SetEnabledAsync(int id, bool enabled)
+    {
+        await MappingRuleService.SetEnabledAsync(id, enabled);
+        await LoadAsync();
+    }
+
+    private async Task MoveAsync(int id, int direction)
+    {
+        await MappingRuleService.MovePriorityAsync(id, direction);
+        await LoadAsync();
+    }
+
+    private async Task TestRuleAsync(int id)
+    {
+        _testResults = (await MappingRuleService.TestRuleAsync(id)).ToList();
+    }
+
+    private class RuleFormModel
+    {
+        public string Name { get; set; } = "";
+        public TimeLogger.Domain.SourceType? SourceType { get; set; }
+        public string MatchField { get; set; } = "";
+        public TimeLogger.Domain.MatchOperator MatchOperator { get; set; } = TimeLogger.Domain.MatchOperator.Equals;
+        public string MatchValue { get; set; } = "";
+        public int TimelogProjectId { get; set; }
+        public int? TimelogTaskId { get; set; }
+        public int Priority { get; set; } = 1;
+    }
+}

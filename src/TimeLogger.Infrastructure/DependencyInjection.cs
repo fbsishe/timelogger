@@ -6,9 +6,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Refit;
 using TimeLogger.Application.Interfaces;
 using TimeLogger.Application.Mapping;
+using TimeLogger.Application.Services;
 using TimeLogger.Infrastructure.Jira;
 using TimeLogger.Infrastructure.Mapping;
 using TimeLogger.Infrastructure.Persistence;
+using TimeLogger.Infrastructure.Services;
 using TimeLogger.Infrastructure.Tempo;
 using TimeLogger.Infrastructure.Timelog;
 
@@ -61,6 +63,12 @@ public static class DependencyInjection
         services.AddScoped<ITempoImportService, TempoImportService>();
         services.AddSingleton<IMappingEngine, MappingEngine>();
         services.AddScoped<IApplyMappingsService, ApplyMappingsService>();
+
+        // UI application services
+        services.AddScoped<IEntryService, EntryService>();
+        services.AddScoped<IMappingRuleService, MappingRuleService>();
+        services.AddScoped<IImportSourceService, ImportSourceService>();
+        services.AddScoped<ITimelogDataService, TimelogDataService>();
 
         // Hangfire
         var connectionString = configuration.GetConnectionString("Default")!;

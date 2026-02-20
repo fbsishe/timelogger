@@ -1,23 +1,87 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@inject IEntryService EntryService
+@implements IAsyncDisposable
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+<MudThemeProvider />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="@(_ => _drawerOpen = !_drawerOpen)" />
+        <MudText Typo="Typo.h6" Class="ml-3">TimeLogger</MudText>
+        <MudSpacer />
+        @if (_unmappedCount > 0)
+        {
+            <MudBadge Content="@_unmappedCount" Color="Color.Error" Overlap="true">
+                <MudIconButton Icon="@Icons.Material.Filled.Warning" Color="Color.Warning"
+                               Href="/entries" />
+            </MudBadge>
+        }
+    </MudAppBar>
 
-        <article class="content px-4">
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
+        <MudNavMenu>
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
+                Dashboard
+            </MudNavLink>
+            <MudNavLink Href="/mapping-rules" Icon="@Icons.Material.Filled.Rule">
+                Mapping Rules
+            </MudNavLink>
+            <MudNavLink Href="/entries" Icon="@Icons.Material.Filled.List">
+                Entries
+                @if (_unmappedCount > 0)
+                {
+                    <MudBadge Content="@_unmappedCount" Color="Color.Error" Class="ml-2" />
+                }
+            </MudNavLink>
+            <MudNavLink Href="/import-history" Icon="@Icons.Material.Filled.History">
+                Import History
+            </MudNavLink>
+            <MudNavLink Href="/sources" Icon="@Icons.Material.Filled.Source">
+                Import Sources
+            </MudNavLink>
+            <MudNavLink Href="/timelog-sync" Icon="@Icons.Material.Filled.Sync">
+                Timelog Sync
+            </MudNavLink>
+            <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">
+                Settings
+            </MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="mt-4 px-4">
             @Body
-        </article>
-    </main>
-</div>
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
 
-<div id="blazor-error-ui" data-nosnippet>
-    An unhandled error has occurred.
-    <a href="." class="reload">Reload</a>
-    <span class="dismiss">🗙</span>
-</div>
+@code {
+    private bool _drawerOpen = true;
+    private int _unmappedCount;
+    private Timer? _refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshBadgeAsync();
+        _refreshTimer = new Timer(async _ =>
+        {
+            await RefreshBadgeAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshBadgeAsync()
+    {
+        _unmappedCount = await EntryService.GetUnmappedCountAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_refreshTimer is not null)
+            await _refreshTimer.DisposeAsync();
+    }
+}

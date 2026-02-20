@@ -1,0 +1,120 @@
+@page "/settings"
+@rendermode InteractiveServer
+@inject IConfiguration Configuration
+
+<PageTitle>Settings – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-1">Settings</MudText>
+<MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+    Configuration is managed via <code>appsettings.json</code>.
+    Sensitive values are masked below.
+</MudText>
+
+<MudGrid Spacing="3">
+    @* Timelog *@
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Timelog API</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudIcon Icon="@Icons.Material.Filled.AccessTime" Color="Color.Primary" />
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @SettingRow("Base URL", Configuration["Timelog:BaseUrl"])
+                @SettingRow("API Key", Configuration["Timelog:ApiKey"], masked: true)
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    @* Jira *@
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Jira API</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudIcon Icon="@Icons.Material.Filled.BugReport" Color="Color.Warning" />
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @SettingRow("Base URL", Configuration["Jira:BaseUrl"])
+                @SettingRow("Email", Configuration["Jira:Email"])
+                @SettingRow("API Token", Configuration["Jira:ApiToken"], masked: true)
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    @* Tempo *@
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Tempo API</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudIcon Icon="@Icons.Material.Filled.Timer" Color="Color.Info" />
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @SettingRow("Base URL", Configuration["Tempo:BaseUrl"])
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    Per-source API tokens are managed on the Import Sources page.
+                </MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    @* Hangfire *@
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Scheduling</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudIcon Icon="@Icons.Material.Filled.Schedule" Color="Color.Secondary" />
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @SettingRow("Daily Pull Cron", Configuration["Hangfire:DailyPullCron"] ?? "0 0 * * *")
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    <MudLink Href="/hangfire" Target="_blank">Open Hangfire Dashboard</MudLink>
+                    to view and manage background jobs.
+                </MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    @* Database *@
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Database</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudIcon Icon="@Icons.Material.Filled.Storage" Color="Color.Secondary" />
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @SettingRow("Connection String", Configuration.GetConnectionString("Default"), masked: true)
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private RenderFragment SettingRow(string label, string? value, bool masked = false) =>
+        @<div class="mb-2">
+            <MudText Typo="Typo.caption" Color="Color.Secondary">@label</MudText>
+            <MudText Typo="Typo.body2">
+                @(masked
+                    ? (string.IsNullOrWhiteSpace(value) ? "(not set)" : new string('•', Math.Min(value.Length, 16)))
+                    : (string.IsNullOrWhiteSpace(value) ? "(not set)" : value))
+            </MudText>
+        </div>;
+}

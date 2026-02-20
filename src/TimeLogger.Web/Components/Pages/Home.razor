@@ -1,7 +1,194 @@
-﻿@page "/"
+@page "/"
+@rendermode InteractiveServer
+@inject IEntryService EntryService
+@inject ITimelogDataService TimelogDataService
+@inject IImportSourceService ImportSourceService
+@inject NavigationManager Nav
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Dashboard – TimeLogger</PageTitle>
 
-<h1>Hello, world!</h1>
+<MudText Typo="Typo.h4" Class="mb-4">Dashboard</MudText>
 
-Welcome to your new app.
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudGrid Spacing="3" Class="mb-4">
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Unmapped Entries</MudText>
+                <MudText Typo="Typo.h4" Color="@(_unmappedCount > 0 ? Color.Error : Color.Success)">
+                    @_unmappedCount
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Last Synced</MudText>
+                <MudText Typo="Typo.h6">@(_lastSyncedAt.HasValue ? _lastSyncedAt.Value.ToLocalTime().ToString("g") : "Never")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Import Sources</MudText>
+                <MudText Typo="Typo.h4">@_sourcesCount</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @if (_unmappedEntries.Count > 0)
+    {
+        <MudText Typo="Typo.h5" Class="mb-2">Unmapped Entries Requiring Attention</MudText>
+        <MudTable Items="_unmappedEntries" Hover="true" Dense="true" Striped="true"
+                  Class="mb-4" Elevation="1">
+            <HeaderContent>
+                <MudTh>Date</MudTh>
+                <MudTh>Source</MudTh>
+                <MudTh>Issue Key</MudTh>
+                <MudTh>Project Key</MudTh>
+                <MudTh>Description</MudTh>
+                <MudTh>Hours</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.SourceName</MudTd>
+                <MudTd>@context.IssueKey</MudTd>
+                <MudTd>@context.ProjectKey</MudTd>
+                <MudTd Style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.Description
+                </MudTd>
+                <MudTd>@context.Hours</MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.Status == "Failed" ? Color.Error : Color.Warning)">
+                        @context.Status
+                    </MudChip>
+                </MudTd>
+                <MudTd>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               OnClick="@(() => OpenMapDialog(context))">
+                        Map
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Secondary"
+                               OnClick="@(() => IgnoreEntryAsync(context.Id))">
+                        Ignore
+                    </MudButton>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Success" Class="mb-4">All entries are mapped.</MudAlert>
+    }
+}
+
+@* Quick-map dialog *@
+<MudDialog @bind-IsVisible="_mapDialogOpen">
+    <TitleContent>Map Entry</TitleContent>
+    <DialogContent>
+        @if (_mapTarget is not null)
+        {
+            <MudText Class="mb-2">
+                <b>@_mapTarget.IssueKey</b> – @_mapTarget.Description (@_mapTarget.WorkDate.ToString("yyyy-MM-dd"))
+            </MudText>
+            <MudSelect T="int?" Label="Project" @bind-Value="_selectedProjectId"
+                       HelperText="Required" Required="true"
+                       AnchorOrigin="Origin.BottomLeft">
+                @foreach (var p in _projects)
+                {
+                    <MudSelectItem T="int?" Value="@p.Id">@p.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="int?" Label="Task (optional)" @bind-Value="_selectedTaskId"
+                       AnchorOrigin="Origin.BottomLeft" Class="mt-3">
+                <MudSelectItem T="int?" Value="@((int?)null)">— none —</MudSelectItem>
+                @foreach (var t in _tasks)
+                {
+                    <MudSelectItem T="int?" Value="@t.Id">@t.Name</MudSelectItem>
+                }
+            </MudSelect>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _mapDialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_selectedProjectId is null)"
+                   OnClick="SaveMapAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private int _unmappedCount;
+    private DateTimeOffset? _lastSyncedAt;
+    private int _sourcesCount;
+    private List<EntryListItem> _unmappedEntries = [];
+    private List<TimelogProjectSummary> _projects = [];
+    private List<TimelogTaskSummary> _tasks = [];
+
+    private bool _mapDialogOpen;
+    private EntryListItem? _mapTarget;
+    private int? _selectedProjectId;
+    private int? _selectedTaskId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var entriesTask = EntryService.GetUnmappedAsync();
+        var syncTask = TimelogDataService.GetLastSyncedAtAsync();
+        var sourcesTask = ImportSourceService.GetAllAsync();
+        var projectsTask = TimelogDataService.GetProjectsAsync();
+
+        await Task.WhenAll(entriesTask, syncTask, sourcesTask, projectsTask);
+
+        _unmappedEntries = (await entriesTask).ToList();
+        _unmappedCount = _unmappedEntries.Count;
+        _lastSyncedAt = await syncTask;
+        _sourcesCount = (await sourcesTask).Count;
+        _projects = (await projectsTask).ToList();
+        _loading = false;
+    }
+
+    private async Task OpenMapDialog(EntryListItem entry)
+    {
+        _mapTarget = entry;
+        _selectedProjectId = null;
+        _selectedTaskId = null;
+        _tasks = [];
+        _mapDialogOpen = true;
+    }
+
+    private async Task OnProjectChangedAsync(int? projectId)
+    {
+        _selectedProjectId = projectId;
+        _selectedTaskId = null;
+        if (projectId.HasValue)
+            _tasks = (await TimelogDataService.GetTasksByProjectAsync(projectId.Value)).ToList();
+        else
+            _tasks = [];
+    }
+
+    private async Task SaveMapAsync()
+    {
+        if (_mapTarget is null || _selectedProjectId is null) return;
+        await EntryService.ManualMapAsync(_mapTarget.Id, _selectedProjectId.Value, _selectedTaskId);
+        _mapDialogOpen = false;
+        await LoadAsync();
+    }
+
+    private async Task IgnoreEntryAsync(int id)
+    {
+        await EntryService.IgnoreAsync(id);
+        await LoadAsync();
+    }
+}
