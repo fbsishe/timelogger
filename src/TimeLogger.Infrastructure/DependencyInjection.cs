@@ -7,6 +7,7 @@ using Refit;
 using TimeLogger.Application.Interfaces;
 using TimeLogger.Application.Mapping;
 using TimeLogger.Application.Services;
+using TimeLogger.Infrastructure.FileImport;
 using TimeLogger.Infrastructure.Jira;
 using TimeLogger.Infrastructure.Mapping;
 using TimeLogger.Infrastructure.Persistence;
@@ -69,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<IMappingRuleService, MappingRuleService>();
         services.AddScoped<IImportSourceService, ImportSourceService>();
         services.AddScoped<ITimelogDataService, TimelogDataService>();
+        services.AddScoped<IFileImportService, FileImportService>();
 
         // Hangfire
         var connectionString = configuration.GetConnectionString("Default")!;

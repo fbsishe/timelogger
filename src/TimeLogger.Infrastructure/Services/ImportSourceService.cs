@@ -86,4 +86,22 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs) : I
         jobs.Enqueue<PullTempoWorklogsJob>(j => j.ExecuteAsync(CancellationToken.None));
         return Task.CompletedTask;
     }
+
+    public async Task<IReadOnlyList<ImportSourceDto>> GetFileUploadSourcesAsync(CancellationToken ct = default)
+    {
+        var sources = await db.ImportSources
+            .Where(s => s.SourceType == SourceType.FileUpload)
+            .ToListAsync(ct);
+
+        var result = new List<ImportSourceDto>();
+        foreach (var s in sources)
+        {
+            var total = await db.ImportedEntries.CountAsync(e => e.ImportSourceId == s.Id, ct);
+            var pending = await db.ImportedEntries.CountAsync(
+                e => e.ImportSourceId == s.Id && e.Status == ImportStatus.Pending, ct);
+            result.Add(new ImportSourceDto(s.Id, s.Name, s.SourceType, s.BaseUrl,
+                s.PollSchedule, s.IsEnabled, s.LastPolledAt, total, pending));
+        }
+        return result;
+    }
 }

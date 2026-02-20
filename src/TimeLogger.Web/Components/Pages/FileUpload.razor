@@ -1,0 +1,240 @@
+@page "/upload"
+@rendermode InteractiveServer
+@inject IFileImportService FileImportService
+@inject IImportSourceService ImportSourceService
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+
+<PageTitle>File Upload – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">File Upload</MudText>
+
+@if (_loadingSources)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_sources.Count == 0)
+{
+    <MudAlert Severity="Severity.Warning">
+        No File Upload import sources are configured.
+        <MudLink Href="/sources">Create one on the Import Sources page</MudLink> before uploading.
+    </MudAlert>
+}
+else
+{
+    <MudGrid Spacing="4">
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Upload Time Entries</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    @* Source selector *@
+                    <MudSelect T="int" Label="Import Source" @bind-Value="_selectedSourceId"
+                               AnchorOrigin="Origin.BottomLeft" Class="mb-4" Required="true">
+                        @foreach (var s in _sources)
+                        {
+                            <MudSelectItem T="int" Value="@s.Id">@s.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @* File picker *@
+                    <MudFileUpload T="IBrowserFile" FilesChanged="OnFileSelected"
+                                   Accept=".csv,.xlsx,.xls,.xlsm" MaximumFileCount="1">
+                        <ActivatorContent>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.AttachFile"
+                                       Class="mb-2">
+                                @(_file is not null ? _file.Name : "Choose File (.csv, .xlsx, .xls)")
+                            </MudButton>
+                        </ActivatorContent>
+                    </MudFileUpload>
+
+                    @if (_file is not null)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-3">
+                            @_file.Name &nbsp;·&nbsp; @FormatBytes(_file.Size)
+                        </MudText>
+                    }
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Upload"
+                               OnClick="ImportAsync"
+                               Disabled="@(_file is null || _selectedSourceId == 0 || _importing)">
+                        @(_importing ? "Importing…" : "Import")
+                    </MudButton>
+                    @if (_importing)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-3" />
+                    }
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+
+        @* Format guide *@
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Expected File Format</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        First row must be a header row. The following column names are recognised
+                        (case-insensitive):
+                    </MudText>
+                    <MudSimpleTable Dense="true" Hover="false" Bordered="true">
+                        <thead>
+                            <tr>
+                                <th>Column</th>
+                                <th>Accepted names</th>
+                                <th>Required</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Date</td><td>Date, WorkDate, Work Date, Day</td><td>Yes</td></tr>
+                            <tr><td>Hours</td><td>Hours, Duration, Time, TimeSpent, H</td><td>Yes</td></tr>
+                            <tr><td>Email</td><td>Email, UserEmail, User Email, Author</td><td>Yes</td></tr>
+                            <tr><td>Description</td><td>Description, Comment, Notes, Summary</td><td>No</td></tr>
+                            <tr><td>Project</td><td>Project, ProjectKey, Project Key</td><td>No</td></tr>
+                            <tr><td>Issue</td><td>Issue, IssueKey, Issue Key, Ticket, Jira</td><td>No</td></tr>
+                            <tr><td>Activity</td><td>Activity, Type, Category</td><td>No</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                        Any additional columns are stored as metadata and available to mapping rules
+                        via the <code>metadata.ColumnName</code> syntax.
+                    </MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* Result panel *@
+    @if (_result is not null)
+    {
+        <MudPaper Class="mt-4 pa-4" Elevation="1">
+            <MudText Typo="Typo.h6" Class="mb-2">Import Result</MudText>
+            <MudGrid>
+                <MudItem xs="6" sm="3">
+                    <MudPaper Class="pa-3 text-center" Elevation="0">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Rows</MudText>
+                        <MudText Typo="Typo.h5">@_result.TotalRows</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudPaper Class="pa-3 text-center" Elevation="0">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Imported</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Success">@_result.Imported</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudPaper Class="pa-3 text-center" Elevation="0">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Skipped (dup)</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Info">@_result.Skipped</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudPaper Class="pa-3 text-center" Elevation="0">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Errors</MudText>
+                        <MudText Typo="Typo.h5"
+                                 Color="@(_result.Errors.Count > 0 ? Color.Error : Color.Default)">
+                            @_result.Errors.Count
+                        </MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            @if (_result.Errors.Count > 0)
+            {
+                <MudExpansionPanels Class="mt-3">
+                    <MudExpansionPanel Text="@($"View {_result.Errors.Count} error(s)")" Dense="true">
+                        <MudList T="string" Dense="true">
+                            @foreach (var err in _result.Errors)
+                            {
+                                <MudListItem T="string" Icon="@Icons.Material.Filled.Error"
+                                             IconColor="Color.Error">
+                                    @err
+                                </MudListItem>
+                            }
+                        </MudList>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+            }
+
+            @if (_result.Imported > 0)
+            {
+                <MudAlert Severity="Severity.Success" Class="mt-3">
+                    @_result.Imported entries imported successfully.
+                    Mapping rules have been applied automatically.
+                    <MudLink Href="/entries">View entries</MudLink>
+                </MudAlert>
+            }
+        </MudPaper>
+    }
+}
+
+@code {
+    private bool _loadingSources = true;
+    private bool _importing;
+    private List<ImportSourceDto> _sources = [];
+    private int _selectedSourceId;
+    private IBrowserFile? _file;
+    private FileImportResult? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _sources = (await ImportSourceService.GetFileUploadSourcesAsync()).ToList();
+        if (_sources.Count > 0)
+            _selectedSourceId = _sources[0].Id;
+        _loadingSources = false;
+    }
+
+    private void OnFileSelected(IBrowserFile? file)
+    {
+        _file = file;
+        _result = null;
+    }
+
+    private async Task ImportAsync()
+    {
+        if (_file is null || _selectedSourceId == 0) return;
+
+        _importing = true;
+        _result = null;
+
+        try
+        {
+            const long maxSize = 20 * 1024 * 1024; // 20 MB
+            await using var stream = _file.OpenReadStream(maxSize);
+            _result = await FileImportService.ImportAsync(_selectedSourceId, stream, _file.Name);
+
+            if (_result.Imported > 0)
+                Snackbar.Add($"Imported {_result.Imported} entries.", Severity.Success);
+            else if (_result.Errors.Count > 0)
+                Snackbar.Add("Import completed with errors.", Severity.Warning);
+            else
+                Snackbar.Add("All rows were already imported (no new entries).", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Import failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+            _file = null;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / (1024.0 * 1024):F1} MB";
+    }
+}

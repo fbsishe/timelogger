@@ -31,4 +31,5 @@ public interface IImportSourceService
     Task DeleteAsync(int id, CancellationToken ct = default);
     Task<IReadOnlyList<ImportHistoryEntry>> GetImportHistoryAsync(int days = 30, CancellationToken ct = default);
     Task TriggerPollAllAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<ImportSourceDto>> GetFileUploadSourcesAsync(CancellationToken ct = default);
 }
