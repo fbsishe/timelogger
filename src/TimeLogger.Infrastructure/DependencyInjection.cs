@@ -71,6 +71,7 @@ public static class DependencyInjection
         services.AddScoped<IImportSourceService, ImportSourceService>();
         services.AddScoped<ITimelogDataService, TimelogDataService>();
         services.AddScoped<IFileImportService, FileImportService>();
+        services.AddScoped<ISubmissionService, SubmissionService>();
 
         // Hangfire
         var connectionString = configuration.GetConnectionString("Default")!;
@@ -106,6 +107,11 @@ public static class DependencyInjection
 
         RecurringJob.AddOrUpdate<PullTempoWorklogsJob>(
             PullTempoWorklogsJob.JobId,
+            job => job.ExecuteAsync(CancellationToken.None),
+            dailyCron);
+
+        RecurringJob.AddOrUpdate<SubmitMappedEntriesJob>(
+            SubmitMappedEntriesJob.JobId,
             job => job.ExecuteAsync(CancellationToken.None),
             dailyCron);
     }

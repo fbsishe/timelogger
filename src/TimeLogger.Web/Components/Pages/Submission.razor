@@ -1,0 +1,157 @@
+@page "/submission"
+@rendermode InteractiveServer
+@inject ISubmissionService SubmissionService
+@inject ISnackbar Snackbar
+
+<PageTitle>Submission – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Submission Pipeline</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    @* Stats row *@
+    <MudGrid Spacing="3" Class="mb-4">
+        <MudItem xs="12" sm="4">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Ready to Submit</MudText>
+                <MudText Typo="Typo.h4"
+                         Color="@(_readyCount > 0 ? Color.Info : Color.Default)">
+                    @_readyCount
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Mapped entries with a Timelog task assigned
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Submitted</MudText>
+                <MudText Typo="Typo.h4" Color="Color.Success">@_submittedCount</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total all-time</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Failed</MudText>
+                <MudText Typo="Typo.h4"
+                         Color="@(_failedCount > 0 ? Color.Error : Color.Default)">
+                    @_failedCount
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Submission attempts</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @* Action bar *@
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4" Spacing="2">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Send"
+                   OnClick="SubmitAllAsync"
+                   Disabled="@(_submitting || _readyCount == 0)">
+            @(_submitting ? "Submitting…" : $"Submit All ({_readyCount})")
+        </MudButton>
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="LoadAsync">
+            Refresh
+        </MudButton>
+        @if (_submitting)
+        {
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+        }
+    </MudStack>
+
+    @if (_readyCount == 0 && _submittedCount == 0)
+    {
+        <MudAlert Severity="Severity.Info">
+            No entries are ready for submission yet.
+            Map some entries first using the <MudLink Href="/mapping-rules">Mapping Rules</MudLink>
+            or the <MudLink Href="/">Dashboard</MudLink>.
+        </MudAlert>
+    }
+
+    @* Audit trail *@
+    @if (_history.Count > 0)
+    {
+        <MudText Typo="Typo.h6" Class="mb-2">Recent Submission History</MudText>
+        <MudTable Items="_history" Hover="true" Dense="true" Striped="true" Elevation="1"
+                  RowsPerPage="50">
+            <HeaderContent>
+                <MudTh>Date</MudTh>
+                <MudTh>Source</MudTh>
+                <MudTh>Issue Key</MudTh>
+                <MudTh>Description</MudTh>
+                <MudTh>Hours</MudTh>
+                <MudTh>Submitted At</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Attempts</MudTh>
+                <MudTh>Error</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.SourceName</MudTd>
+                <MudTd>@context.IssueKey</MudTd>
+                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.Description
+                </MudTd>
+                <MudTd>@context.Hours</MudTd>
+                <MudTd>@context.SubmittedAt.ToLocalTime().ToString("g")</MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.Status == TimeLogger.Domain.SubmissionStatus.Success
+                                 ? Color.Success : Color.Error)">
+                        @context.Status
+                    </MudChip>
+                </MudTd>
+                <MudTd>@context.AttemptCount</MudTd>
+                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                       Title="@context.ErrorMessage">
+                    @context.ErrorMessage
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private bool _submitting;
+    private int _readyCount;
+    private int _submittedCount;
+    private int _failedCount;
+    private List<SubmissionHistoryItem> _history = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var readyTask     = SubmissionService.GetReadyToSubmitCountAsync();
+        var submittedTask = SubmissionService.GetSubmittedCountAsync();
+        var failedTask    = SubmissionService.GetFailedCountAsync();
+        var historyTask   = SubmissionService.GetRecentAsync();
+
+        await Task.WhenAll(readyTask, submittedTask, failedTask, historyTask);
+
+        _readyCount     = await readyTask;
+        _submittedCount = await submittedTask;
+        _failedCount    = await failedTask;
+        _history        = (await historyTask).ToList();
+        _loading = false;
+    }
+
+    private async Task SubmitAllAsync()
+    {
+        _submitting = true;
+        await SubmissionService.TriggerSubmitAllAsync();
+        Snackbar.Add("Submission job enqueued. Refresh in a moment.", Severity.Success);
+        _submitting = false;
+    }
+}
