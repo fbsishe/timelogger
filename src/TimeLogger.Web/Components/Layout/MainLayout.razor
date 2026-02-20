@@ -1,5 +1,5 @@
 @inherits LayoutComponentBase
-@inject IEntryService EntryService
+@inject IServiceScopeFactory ScopeFactory
 @implements IAsyncDisposable
 
 <MudThemeProvider />
@@ -68,26 +68,34 @@
 @code {
     private bool _drawerOpen = true;
     private int _unmappedCount;
-    private Timer? _refreshTimer;
+    private readonly CancellationTokenSource _cts = new();
 
     protected override async Task OnInitializedAsync()
     {
         await RefreshBadgeAsync();
-        _refreshTimer = new Timer(async _ =>
+        _ = RunPeriodicRefreshAsync(_cts.Token);
+    }
+
+    private async Task RunPeriodicRefreshAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        while (await timer.WaitForNextTickAsync(ct))
         {
             await RefreshBadgeAsync();
             await InvokeAsync(StateHasChanged);
-        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        }
     }
 
     private async Task RefreshBadgeAsync()
     {
-        _unmappedCount = await EntryService.GetUnmappedCountAsync();
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var svc = scope.ServiceProvider.GetRequiredService<IEntryService>();
+        _unmappedCount = await svc.GetUnmappedCountAsync();
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_refreshTimer is not null)
-            await _refreshTimer.DisposeAsync();
+        await _cts.CancelAsync();
+        _cts.Dispose();
     }
 }

@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace TimeLogger.Infrastructure.Persistence.Migrations
+namespace TimeLogger.Infrastructure.Migrations
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration
@@ -153,8 +153,7 @@ namespace TimeLogger.Infrastructure.Persistence.Migrations
                         name: "FK_ImportedEntries_TimelogTasks_TimelogTaskId",
                         column: x => x.TimelogTaskId,
                         principalTable: "TimelogTasks",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
+                        principalColumn: "Id");
                 });
 
             migrationBuilder.CreateTable(

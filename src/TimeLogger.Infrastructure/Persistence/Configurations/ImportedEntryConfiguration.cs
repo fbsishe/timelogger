@@ -37,7 +37,7 @@ public class ImportedEntryConfiguration : IEntityTypeConfiguration<ImportedEntry
         builder.HasOne(x => x.TimelogTask)
             .WithMany(x => x.ImportedEntries)
             .HasForeignKey(x => x.TimelogTaskId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.ClientSetNull);
 
         builder.HasOne(x => x.SubmittedEntry)
             .WithOne(x => x.ImportedEntry)

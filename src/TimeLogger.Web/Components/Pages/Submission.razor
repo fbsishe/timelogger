@@ -133,17 +133,10 @@ else
     private async Task LoadAsync()
     {
         _loading = true;
-        var readyTask     = SubmissionService.GetReadyToSubmitCountAsync();
-        var submittedTask = SubmissionService.GetSubmittedCountAsync();
-        var failedTask    = SubmissionService.GetFailedCountAsync();
-        var historyTask   = SubmissionService.GetRecentAsync();
-
-        await Task.WhenAll(readyTask, submittedTask, failedTask, historyTask);
-
-        _readyCount     = await readyTask;
-        _submittedCount = await submittedTask;
-        _failedCount    = await failedTask;
-        _history        = (await historyTask).ToList();
+        _readyCount     = await SubmissionService.GetReadyToSubmitCountAsync();
+        _submittedCount = await SubmissionService.GetSubmittedCountAsync();
+        _failedCount    = await SubmissionService.GetFailedCountAsync();
+        _history        = (await SubmissionService.GetRecentAsync()).ToList();
         _loading = false;
     }
 

@@ -1,33 +1,75 @@
 using Hangfire;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using MudBlazor.Services;
+using Serilog;
+using Serilog.Events;
 using TimeLogger.Infrastructure;
 using TimeLogger.Web.Components;
 
-var builder = WebApplication.CreateBuilder(args);
+// Bootstrap logger: captures failures before full DI is set up
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
-builder.Services.AddInfrastructure(builder.Configuration);
-builder.Services.AddMudServices();
-
-builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
-
-var app = builder.Build();
-
-if (!app.Environment.IsDevelopment())
+try
 {
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    app.UseHsts();
+    var builder = WebApplication.CreateBuilder(args);
+
+    builder.Host.UseSerilog((ctx, _, cfg) => cfg
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+        .MinimumLevel.Override("Hangfire", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .WriteTo.Console(outputTemplate:
+            "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+        .WriteTo.File("logs/timelogger-.txt",
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 7,
+            outputTemplate:
+            "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}"));
+
+    // Startup config validation — fail fast with a clear message
+    var connStr = builder.Configuration.GetConnectionString("Default");
+    if (string.IsNullOrWhiteSpace(connStr))
+        throw new InvalidOperationException(
+            "ConnectionStrings:Default is not configured. " +
+            "Add it to appsettings.json or as an environment variable.");
+
+    builder.Services.AddInfrastructure(builder.Configuration);
+    builder.Services.AddMudServices();
+    builder.Services.AddHealthChecks();
+    builder.Services.AddRazorComponents()
+        .AddInteractiveServerComponents();
+
+    var app = builder.Build();
+
+    if (!app.Environment.IsDevelopment())
+    {
+        app.UseExceptionHandler("/Error", createScopeForErrors: true);
+        app.UseHsts();
+    }
+
+    app.UseHttpsRedirection();
+    app.UseAntiforgery();
+
+    app.UseHangfireDashboard("/hangfire");
+    app.MapHealthChecks("/health");
+
+    app.MapStaticAssets();
+    app.MapRazorComponents<App>()
+        .AddInteractiveServerRenderMode();
+
+    DependencyInjection.AddRecurringJobs(app.Configuration);
+
+    app.Run();
 }
-
-app.UseHttpsRedirection();
-app.UseAntiforgery();
-
-app.UseHangfireDashboard("/hangfire");
-
-app.MapStaticAssets();
-app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
-
-DependencyInjection.AddRecurringJobs(app.Configuration);
-
-app.Run();
+catch (Exception ex) when (ex is not HostAbortedException)
+{
+    Log.Fatal(ex, "Application startup failed");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

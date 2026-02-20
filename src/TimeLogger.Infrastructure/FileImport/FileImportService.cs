@@ -34,7 +34,7 @@ public sealed class FileImportService(
            .. ProjectAliases, .. IssueAliases, .. ActivityAliases];
 
     static FileImportService() =>
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+        ExcelPackage.License.SetNonCommercialPersonal("TimeLogger");
 
     public async Task<FileImportResult> ImportAsync(
         int sourceId, Stream stream, string fileName, CancellationToken ct = default)

@@ -8,7 +8,7 @@ using TimeLogger.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TimeLogger.Infrastructure.Persistence.Migrations
+namespace TimeLogger.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
     partial class AppDbContextModelSnapshot : ModelSnapshot
@@ -323,8 +323,7 @@ namespace TimeLogger.Infrastructure.Persistence.Migrations
 
                     b.HasOne("TimeLogger.Domain.Entities.TimelogTask", "TimelogTask")
                         .WithMany("ImportedEntries")
-                        .HasForeignKey("TimelogTaskId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("TimelogTaskId");
 
                     b.Navigation("ImportSource");
 

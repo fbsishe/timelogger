@@ -4,6 +4,7 @@
 @inject ITimelogDataService TimelogDataService
 @inject IEntryService EntryService
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
 <PageTitle>Mapping Rules – TimeLogger</PageTitle>
 
@@ -106,7 +107,7 @@ else
 }
 
 @* Create / Edit dialog *@
-<MudDialog @bind-IsVisible="_dialogOpen">
+<MudDialog @bind-Visible="_dialogOpen">
     <TitleContent>@(_editingId.HasValue ? "Edit Rule" : "New Rule")</TitleContent>
     <DialogContent>
         <MudTextField @bind-Value="_form.Name" Label="Rule Name" Required="true" Class="mb-3" />
@@ -166,11 +167,8 @@ else
     private async Task LoadAsync()
     {
         _loading = true;
-        var rulesTask = MappingRuleService.GetAllAsync();
-        var projectsTask = TimelogDataService.GetProjectsAsync();
-        await Task.WhenAll(rulesTask, projectsTask);
-        _rules = (await rulesTask).ToList();
-        _projects = (await projectsTask).ToList();
+        _rules = (await MappingRuleService.GetAllAsync()).ToList();
+        _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
         _loading = false;
     }
 
@@ -218,6 +216,12 @@ else
 
     private async Task DeleteAsync(int id)
     {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Delete Rule",
+            "Delete this mapping rule? This cannot be undone.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+
         await MappingRuleService.DeleteAsync(id);
         Snackbar.Add("Rule deleted.", Severity.Info);
         await LoadAsync();

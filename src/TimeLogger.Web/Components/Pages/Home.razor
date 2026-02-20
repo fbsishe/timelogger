@@ -88,7 +88,7 @@ else
 }
 
 @* Quick-map dialog *@
-<MudDialog @bind-IsVisible="_mapDialogOpen">
+<MudDialog @bind-Visible="_mapDialogOpen">
     <TitleContent>Map Entry</TitleContent>
     <DialogContent>
         @if (_mapTarget is not null)
@@ -144,18 +144,11 @@ else
     private async Task LoadAsync()
     {
         _loading = true;
-        var entriesTask = EntryService.GetUnmappedAsync();
-        var syncTask = TimelogDataService.GetLastSyncedAtAsync();
-        var sourcesTask = ImportSourceService.GetAllAsync();
-        var projectsTask = TimelogDataService.GetProjectsAsync();
-
-        await Task.WhenAll(entriesTask, syncTask, sourcesTask, projectsTask);
-
-        _unmappedEntries = (await entriesTask).ToList();
+        _unmappedEntries = (await EntryService.GetUnmappedAsync()).ToList();
         _unmappedCount = _unmappedEntries.Count;
-        _lastSyncedAt = await syncTask;
-        _sourcesCount = (await sourcesTask).Count;
-        _projects = (await projectsTask).ToList();
+        _lastSyncedAt = await TimelogDataService.GetLastSyncedAtAsync();
+        _sourcesCount = (await ImportSourceService.GetAllAsync()).Count;
+        _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
         _loading = false;
     }
 

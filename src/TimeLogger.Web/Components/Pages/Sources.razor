@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @inject IImportSourceService ImportSourceService
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
 <PageTitle>Import Sources – TimeLogger</PageTitle>
 
@@ -81,7 +82,7 @@ else
 }
 
 @* Add / Edit dialog *@
-<MudDialog @bind-IsVisible="_dialogOpen">
+<MudDialog @bind-Visible="_dialogOpen">
     <TitleContent>@(_editingId.HasValue ? "Edit Source" : "Add Source")</TitleContent>
     <DialogContent>
         <MudTextField @bind-Value="_form.Name" Label="Name" Required="true" Class="mb-3" />
@@ -168,6 +169,12 @@ else
 
     private async Task DeleteAsync(int id)
     {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Delete Source",
+            "Delete this import source and all its imported entries? This cannot be undone.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+
         await ImportSourceService.DeleteAsync(id);
         Snackbar.Add("Source deleted.", Severity.Info);
         await LoadAsync();

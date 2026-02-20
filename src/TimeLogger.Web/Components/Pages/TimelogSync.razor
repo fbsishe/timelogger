@@ -111,11 +111,8 @@ else
         _loading = true;
         _selectedProject = null;
         _tasks = [];
-        var projectsTask = TimelogDataService.GetProjectsAsync();
-        var syncTask = TimelogDataService.GetLastSyncedAtAsync();
-        await Task.WhenAll(projectsTask, syncTask);
-        _projects = (await projectsTask).ToList();
-        _lastSyncedAt = await syncTask;
+        _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
+        _lastSyncedAt = await TimelogDataService.GetLastSyncedAtAsync();
         _loading = false;
     }
 

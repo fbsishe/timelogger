@@ -9,10 +9,10 @@ using TimeLogger.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TimeLogger.Infrastructure.Persistence.Migrations
+namespace TimeLogger.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260219135833_InitialCreate")]
+    [Migration("20260220083741_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -326,8 +326,7 @@ namespace TimeLogger.Infrastructure.Persistence.Migrations
 
                     b.HasOne("TimeLogger.Domain.Entities.TimelogTask", "TimelogTask")
                         .WithMany("ImportedEntries")
-                        .HasForeignKey("TimelogTaskId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("TimelogTaskId");
 
                     b.Navigation("ImportSource");
 
