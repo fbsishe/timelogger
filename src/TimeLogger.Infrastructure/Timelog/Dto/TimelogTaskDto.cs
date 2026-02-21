@@ -8,19 +8,19 @@ public class TimelogTaskDto
     public int TaskId { get; set; }
 
     [JsonPropertyName("ID")]
-    public required string Id { get; set; }
+    public string? Id { get; set; }
 
-    [JsonPropertyName("Name")]
+    [JsonPropertyName("TaskName")]
     public required string Name { get; set; }
 
-    [JsonPropertyName("No")]
+    [JsonPropertyName("TaskNo")]
     public string? No { get; set; }
 
     [JsonPropertyName("ProjectID")]
     public int ProjectId { get; set; }
 
-    [JsonPropertyName("ParentTaskID")]
-    public int? ParentTaskId { get; set; }
+    [JsonPropertyName("IsActive")]
+    public bool IsActive { get; set; }
 
     [JsonPropertyName("ParentFullName")]
     public string? ParentFullName { get; set; }

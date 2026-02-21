@@ -2,27 +2,36 @@ using System.Text.Json.Serialization;
 
 namespace TimeLogger.Infrastructure.Timelog.Dto;
 
-/// <summary>TimeLog API Format (TAF) list response wrapper.</summary>
+/// <summary>
+/// TimeLog HAL-style list response.
+/// Items are nested as Entities[i].Properties.
+/// </summary>
 public class TafListResponse<T>
 {
-    [JsonPropertyName("Data")]
-    public List<T> Data { get; set; } = [];
+    [JsonPropertyName("Entities")]
+    public List<TafEntity<T>> Entities { get; set; } = [];
 
-    [JsonPropertyName("Paging")]
-    public TafPaging? Paging { get; set; }
+    [JsonPropertyName("Properties")]
+    public TafListProperties? Properties { get; set; }
+
+    /// <summary>Convenience accessor — flattens Entities[i].Properties into a plain list.</summary>
+    public List<T> Data => Entities.ConvertAll(e => e.Properties);
 }
 
-public class TafPaging
+public class TafEntity<T>
 {
-    [JsonPropertyName("Page")]
-    public int Page { get; set; }
+    [JsonPropertyName("Properties")]
+    public T Properties { get; set; } = default!;
+}
 
-    [JsonPropertyName("PageSize")]
-    public int PageSize { get; set; }
+public class TafListProperties
+{
+    [JsonPropertyName("TotalRecord")]
+    public string TotalRecord { get; set; } = "0";
 
-    [JsonPropertyName("TotalCount")]
-    public int TotalCount { get; set; }
+    [JsonPropertyName("TotalPage")]
+    public string TotalPage { get; set; } = "0";
 
-    [JsonPropertyName("HasNextPage")]
-    public bool HasNextPage { get; set; }
+    [JsonPropertyName("PageNumber")]
+    public string PageNumber { get; set; } = "1";
 }

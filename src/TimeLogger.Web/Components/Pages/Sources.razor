@@ -3,6 +3,7 @@
 @inject IImportSourceService ImportSourceService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject NavigationManager Nav
 
 <PageTitle>Import Sources – TimeLogger</PageTitle>
 
@@ -14,11 +15,18 @@
 }
 else
 {
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mb-3"
-               StartIcon="@Icons.Material.Filled.Add"
-               OnClick="OpenCreateDialog">
-        Add Source
-    </MudButton>
+    <MudStack Row="true" Spacing="2" Class="mb-3">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreateDialog">
+            Add Source
+        </MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.CloudDownload"
+                   OnClick="PollAllAsync" Disabled="@_polling">
+            @(_polling ? "Polling…" : "Poll Now")
+        </MudButton>
+    </MudStack>
 
     @if (_sources.Count == 0)
     {
@@ -113,6 +121,7 @@ else
 
 @code {
     private bool _loading = true;
+    private bool _polling;
     private List<ImportSourceDto> _sources = [];
     private bool _dialogOpen;
     private int? _editingId;
@@ -165,6 +174,14 @@ else
         }
         _dialogOpen = false;
         await LoadAsync();
+    }
+
+    private async Task PollAllAsync()
+    {
+        _polling = true;
+        await ImportSourceService.TriggerPollAllAsync();
+        Snackbar.Add("Poll job enqueued. Refresh in a moment to see imported entries.", Severity.Success);
+        _polling = false;
     }
 
     private async Task DeleteAsync(int id)

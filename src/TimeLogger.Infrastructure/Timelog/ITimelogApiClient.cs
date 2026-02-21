@@ -1,27 +1,26 @@
 using Refit;
 using TimeLogger.Infrastructure.Timelog.Dto;
 
+
 namespace TimeLogger.Infrastructure.Timelog;
 
 [Headers("Authorization: Bearer")]
 public interface ITimelogApiClient
 {
-    /// <summary>Returns all active projects. Optionally filter by customer.</summary>
-    [Get("/project/GetAll")]
+    /// <summary>Returns all projects (up to 500 per call).</summary>
+    [Get("/v1/project/get-all?$pagesize=500")]
     Task<TafListResponse<TimelogProjectDto>> GetProjectsAsync(
         [Query] bool isActive = true,
-        [Query] string? version = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Returns all tasks for a given Timelog project (integer ID).</summary>
-    [Get("/task/GetAllByProjectID")]
+    /// <summary>Returns tasks for a given project (up to 500 per call).</summary>
+    [Get("/v1/task/filter?$pagesize=500")]
     Task<TafListResponse<TimelogTaskDto>> GetTasksByProjectIdAsync(
-        [Query] int projectID,
-        [Query] string? version = null,
+        [Query] int projectId,
         CancellationToken cancellationToken = default);
 
     /// <summary>Creates a time registration in Timelog.</summary>
-    [Post("/timeregistration/Create")]
+    [Post("/v1/time-registration")]
     Task<IApiResponse> CreateTimeRegistrationAsync(
         [Body] CreateTimeRegistrationDto model,
         CancellationToken cancellationToken = default);

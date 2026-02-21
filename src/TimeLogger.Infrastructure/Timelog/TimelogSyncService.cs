@@ -22,14 +22,16 @@ public class TimelogSyncService(
 
         foreach (var dto in projectDtos)
         {
+            var externalId = dto.ProjectId.ToString();
+
             var project = await db.TimelogProjects
-                .FirstOrDefaultAsync(p => p.ExternalId == dto.Id, cancellationToken);
+                .FirstOrDefaultAsync(p => p.ExternalId == externalId, cancellationToken);
 
             if (project is null)
             {
                 project = new TimelogProject
                 {
-                    ExternalId = dto.Id,
+                    ExternalId = externalId,
                     Name = dto.Name,
                     Description = dto.Description,
                     IsActive = true,
@@ -51,7 +53,7 @@ public class TimelogSyncService(
         }
 
         // Mark projects no longer returned as inactive
-        var activeExternalIds = projectDtos.Select(p => p.Id).ToHashSet();
+        var activeExternalIds = projectDtos.Select(p => p.ProjectId.ToString()).ToHashSet();
         var staleProjects = await db.TimelogProjects
             .Where(p => p.IsActive && !activeExternalIds.Contains(p.ExternalId))
             .ToListAsync(cancellationToken);
@@ -90,15 +92,16 @@ public class TimelogSyncService(
 
         foreach (var dto in taskDtos)
         {
-            var task = existingTasks.FirstOrDefault(t => t.ExternalId == dto.Id);
+            var externalId = dto.TaskId.ToString();
+            var task = existingTasks.FirstOrDefault(t => t.ExternalId == externalId);
 
             if (task is null)
             {
                 task = new TimelogTask
                 {
-                    ExternalId = dto.Id,
+                    ExternalId = externalId,
                     Name = dto.Name,
-                    IsActive = true,
+                    IsActive = dto.IsActive,
                     LastSyncedAt = syncedAt,
                     TimelogProjectId = project.Id,
                 };
@@ -107,13 +110,13 @@ public class TimelogSyncService(
             else
             {
                 task.Name = dto.Name;
-                task.IsActive = true;
+                task.IsActive = dto.IsActive;
                 task.LastSyncedAt = syncedAt;
             }
         }
 
         // Mark tasks no longer returned as inactive
-        var activeTaskIds = taskDtos.Select(t => t.Id).ToHashSet();
+        var activeTaskIds = taskDtos.Select(t => t.TaskId.ToString()).ToHashSet();
         foreach (var stale in existingTasks.Where(t => t.IsActive && !activeTaskIds.Contains(t.ExternalId)))
         {
             stale.IsActive = false;
@@ -125,7 +128,6 @@ public class TimelogSyncService(
 
     private async Task<List<Dto.TimelogProjectDto>> FetchAllProjectsAsync(CancellationToken cancellationToken)
     {
-        // The Timelog API does not page projects — it returns all in a single call
         var response = await apiClient.GetProjectsAsync(isActive: true, cancellationToken: cancellationToken);
         return response.Data;
     }
