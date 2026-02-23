@@ -28,6 +28,9 @@ public class TimelogSubmissionService(
             return;
         }
 
+        var employeeMapping = await db.EmployeeMappings
+            .FirstOrDefaultAsync(m => m.AtlassianAccountId == entry.UserEmail, cancellationToken);
+
         var model = new CreateTimeRegistrationDto
         {
             TaskId = int.Parse(task.ExternalId),
@@ -35,6 +38,7 @@ public class TimelogSubmissionService(
             Hours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2),
             Comment = entry.Description,
             Billable = false,
+            UserId = employeeMapping?.TimelogUserId,
         };
 
         var existingSubmission = await db.SubmittedEntries
@@ -73,7 +77,7 @@ public class TimelogSubmissionService(
             }
             else
             {
-                var error = await response.Error?.GetContentAsAsync<string>()! ?? response.Error?.Message;
+                var error = response.Error?.Content ?? response.Error?.Message;
                 logger.LogWarning("Timelog rejected entry {EntryId}: {StatusCode} — {Error}",
                     entry.Id, response.StatusCode, error);
 

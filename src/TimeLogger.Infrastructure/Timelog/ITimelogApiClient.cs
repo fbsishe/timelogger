@@ -24,4 +24,9 @@ public interface ITimelogApiClient
     Task<IApiResponse> CreateTimeRegistrationAsync(
         [Body] CreateTimeRegistrationDto model,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Returns all employees (up to 500 per call).</summary>
+    [Get("/v1/user?$pagesize=500")]
+    Task<TafListResponse<TimelogUserDto>> GetUsersAsync(
+        CancellationToken cancellationToken = default);
 }

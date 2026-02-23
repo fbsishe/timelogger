@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @inject ISubmissionService SubmissionService
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
 <PageTitle>Submission – TimeLogger</PageTitle>
 
@@ -19,8 +20,8 @@ else
             <MudPaper Class="pa-4" Elevation="2">
                 <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Ready to Submit</MudText>
                 <MudText Typo="Typo.h4"
-                         Color="@(_readyCount > 0 ? Color.Info : Color.Default)">
-                    @_readyCount
+                         Color="@(_readyEntries.Count > 0 ? Color.Info : Color.Default)">
+                    @_readyEntries.Count
                 </MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
                     Mapped entries with a Timelog task assigned
@@ -47,14 +48,20 @@ else
     </MudGrid>
 
     @* Action bar *@
-    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4" Spacing="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3" Spacing="2">
         <MudButton Variant="Variant.Filled" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.Send"
-                   OnClick="SubmitAllAsync"
-                   Disabled="@(_submitting || _readyCount == 0)">
-            @(_submitting ? "Submitting…" : $"Submit All ({_readyCount})")
+                   OnClick="SubmitSelectedAsync"
+                   Disabled="@(_submitting || !_selectedEntries.Any())">
+            @(_submitting ? "Submitting…" : $"Submit Selected ({_selectedEntries.Count})")
         </MudButton>
-        <MudButton Variant="Variant.Outlined"
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.DoneAll"
+                   OnClick="SubmitAllAsync"
+                   Disabled="@(_submitting || _readyEntries.Count == 0)">
+            @(_submitting ? "Submitting…" : $"Submit All ({_readyEntries.Count})")
+        </MudButton>
+        <MudButton Variant="Variant.Text"
                    StartIcon="@Icons.Material.Filled.Refresh"
                    OnClick="LoadAsync">
             Refresh
@@ -65,7 +72,38 @@ else
         }
     </MudStack>
 
-    @if (_readyCount == 0 && _submittedCount == 0)
+    @* Ready entries table *@
+    @if (_readyEntries.Count > 0)
+    {
+        <MudText Typo="Typo.h6" Class="mb-2">Ready to Submit</MudText>
+        <MudTable T="ReadyEntryItem" Items="_readyEntries"
+                  MultiSelection="true"
+                  @bind-SelectedItems="_selectedEntries"
+                  Hover="true" Dense="true" Striped="true" Elevation="1"
+                  Class="mb-4">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.WorkDate)">Date</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.SourceName)">Source</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.IssueKey ?? string.Empty)">Issue Key</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.Description ?? string.Empty)">Description</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.Hours)">Hours</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.UserDisplay ?? string.Empty)">Employee</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.TimelogTaskName ?? string.Empty)">Timelog Task</MudTableSortLabel></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.SourceName</MudTd>
+                <MudTd>@context.IssueKey</MudTd>
+                <MudTd Style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.Description
+                </MudTd>
+                <MudTd>@context.Hours</MudTd>
+                <MudTd>@(context.UserDisplay ?? "—")</MudTd>
+                <MudTd>@(context.TimelogTaskName ?? "—")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+    else if (_submittedCount == 0)
     {
         <MudAlert Severity="Severity.Info">
             No entries are ready for submission yet.
@@ -81,18 +119,20 @@ else
         <MudTable Items="_history" Hover="true" Dense="true" Striped="true" Elevation="1"
                   RowsPerPage="50">
             <HeaderContent>
-                <MudTh>Date</MudTh>
-                <MudTh>Source</MudTh>
-                <MudTh>Issue Key</MudTh>
-                <MudTh>Description</MudTh>
-                <MudTh>Hours</MudTh>
-                <MudTh>Submitted At</MudTh>
-                <MudTh>Status</MudTh>
-                <MudTh>Attempts</MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.WorkDate)">Date</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.UserDisplay ?? string.Empty)">Person</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.SourceName)">Source</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.IssueKey ?? string.Empty)">Issue Key</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.Description ?? string.Empty)">Description</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.Hours)">Hours</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.SubmittedAt)">Submitted At</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.Status)">Status</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.AttemptCount)">Attempts</MudTableSortLabel></MudTh>
                 <MudTh>Error</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@(context.UserDisplay ?? "—")</MudTd>
                 <MudTd>@context.SourceName</MudTd>
                 <MudTd>@context.IssueKey</MudTd>
                 <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
@@ -108,8 +148,7 @@ else
                     </MudChip>
                 </MudTd>
                 <MudTd>@context.AttemptCount</MudTd>
-                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                       Title="@context.ErrorMessage">
+                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                     @context.ErrorMessage
                 </MudTd>
             </RowTemplate>
@@ -123,7 +162,8 @@ else
 @code {
     private bool _loading = true;
     private bool _submitting;
-    private int _readyCount;
+    private List<ReadyEntryItem> _readyEntries = [];
+    private HashSet<ReadyEntryItem> _selectedEntries = [];
     private int _submittedCount;
     private int _failedCount;
     private List<SubmissionHistoryItem> _history = [];
@@ -133,15 +173,40 @@ else
     private async Task LoadAsync()
     {
         _loading = true;
-        _readyCount     = await SubmissionService.GetReadyToSubmitCountAsync();
+        _selectedEntries = [];
+        _readyEntries   = (await SubmissionService.GetReadyToSubmitAsync()).ToList();
         _submittedCount = await SubmissionService.GetSubmittedCountAsync();
         _failedCount    = await SubmissionService.GetFailedCountAsync();
         _history        = (await SubmissionService.GetRecentAsync()).ToList();
         _loading = false;
     }
 
+    private async Task SubmitSelectedAsync()
+    {
+        if (!_selectedEntries.Any()) return;
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Submit Selected",
+            $"Submit {_selectedEntries.Count} selected entr{(_selectedEntries.Count == 1 ? "y" : "ies")} to Timelog?",
+            yesText: "Submit", cancelText: "Cancel");
+        if (confirmed != true) return;
+
+        _submitting = true;
+        var ids = _selectedEntries.Select(e => e.Id).ToList();
+        await SubmissionService.SubmitSelectedAsync(ids);
+        Snackbar.Add($"Submitted {ids.Count} entr{(ids.Count == 1 ? "y" : "ies")}.", Severity.Success);
+        _submitting = false;
+        await LoadAsync();
+    }
+
     private async Task SubmitAllAsync()
     {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Submit All",
+            $"Submit all {_readyEntries.Count} ready entries to Timelog?",
+            yesText: "Submit All", cancelText: "Cancel");
+        if (confirmed != true) return;
+
         _submitting = true;
         await SubmissionService.TriggerSubmitAllAsync();
         Snackbar.Add("Submission job enqueued. Refresh in a moment.", Severity.Success);

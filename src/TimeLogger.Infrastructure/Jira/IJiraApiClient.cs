@@ -12,4 +12,10 @@ public interface IJiraApiClient
         long issueId,
         [Query] string? fields = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Returns basic user info (displayName, emailAddress) for an Atlassian account ID.</summary>
+    [Get("/rest/api/3/user")]
+    Task<JiraUserDto> GetUserAsync(
+        [Query] string accountId,
+        CancellationToken cancellationToken = default);
 }

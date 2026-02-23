@@ -4,11 +4,12 @@ using TimeLogger.Application.Services;
 using TimeLogger.Domain;
 using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure.Persistence;
+using TimeLogger.Application.Interfaces;
 using TimeLogger.Infrastructure.Tempo;
 
 namespace TimeLogger.Infrastructure.Services;
 
-public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs) : IImportSourceService
+public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITempoImportService tempoImport) : IImportSourceService
 {
     public async Task<IReadOnlyList<ImportSourceDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -86,6 +87,9 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs) : I
         jobs.Enqueue<PullTempoWorklogsJob>(j => j.ExecuteAsync(CancellationToken.None));
         return Task.CompletedTask;
     }
+
+    public async Task<int> ImportRangeAsync(int sourceId, DateOnly from, DateOnly to, CancellationToken ct = default)
+        => await tempoImport.ImportAsync(sourceId, from, to, ct);
 
     public async Task<IReadOnlyList<ImportSourceDto>> GetFileUploadSourcesAsync(CancellationToken ct = default)
     {

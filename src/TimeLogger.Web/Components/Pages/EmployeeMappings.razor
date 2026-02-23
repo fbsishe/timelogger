@@ -1,0 +1,271 @@
+@page "/employee-mappings"
+@rendermode InteractiveServer
+@inject IEmployeeMappingService EmployeeMappingService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Employee Mappings – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Employee Mappings</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mb-3"
+               StartIcon="@Icons.Material.Filled.Add"
+               OnClick="OpenCreateDialog">
+        New Mapping
+    </MudButton>
+
+    <MudTable Items="_mappings" Hover="true" Dense="true" Striped="true" Elevation="1">
+        <HeaderContent>
+            <MudTh>Account ID</MudTh>
+            <MudTh>Jira Display Name</MudTh>
+            <MudTh>Timelog User</MudTh>
+            <MudTh>User ID</MudTh>
+            <MudTh>Updated</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudText Typo="Typo.body2" Style="font-family:monospace;font-size:0.75rem">
+                    @context.AtlassianAccountId
+                </MudText>
+            </MudTd>
+            <MudTd>@(context.DisplayName ?? "—")</MudTd>
+            <MudTd>@(context.TimelogUserDisplayName ?? "—")</MudTd>
+            <MudTd>@context.TimelogUserId</MudTd>
+            <MudTd>@context.UpdatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                               OnClick="@(() => OpenEditDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                               Color="Color.Error"
+                               OnClick="@(() => DeleteAsync(context.Id))" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Class="pa-4">No employee mappings configured yet.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+@* Create / Edit dialog *@
+<MudDialog @bind-Visible="_dialogOpen">
+    <TitleContent>@(_editingAccountId is not null ? "Edit Mapping" : "New Mapping")</TitleContent>
+    <DialogContent>
+        @if (_editingAccountId is null)
+        {
+            @* New mapping: allow choosing from known unmapped account IDs or entering manually *@
+            @if (_loadingUnmapped)
+            {
+                <div class="d-flex align-center gap-2 mb-3">
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                    <MudText Typo="Typo.body2">Loading account IDs from Jira...</MudText>
+                </div>
+            }
+            else if (_unmappedAccountIds.Count > 0)
+            {
+                <MudSelect T="string" Label="Known unmapped employees"
+                           Value="_form.AtlassianAccountId"
+                           ValueChanged="OnAccountIdSelectedAsync"
+                           AnchorOrigin="Origin.BottomLeft" Class="mb-3"
+                           Clearable="true">
+                    @foreach (var id in _unmappedAccountIds)
+                    {
+                        <MudSelectItem T="string" Value="@id.AccountId">
+                            @(id.DisplayName is not null ? $"{id.DisplayName} ({id.AccountId})" : id.AccountId)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            <MudTextField @bind-Value="_form.AtlassianAccountId"
+                          Label="Atlassian Account ID"
+                          HelperText="e.g. 712020:0fd845e7-..."
+                          Required="true" Class="mb-3" />
+        }
+        else
+        {
+            <MudTextField Value="@_editingAccountId" Label="Atlassian Account ID"
+                          ReadOnly="true" Class="mb-3"
+                          HelperText="Account ID cannot be changed" />
+        }
+
+        <div class="d-flex align-center gap-2 mb-3">
+            <MudTextField @bind-Value="_form.DisplayName"
+                          Label="Jira Display Name"
+                          Style="flex:1" />
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           Title="Fetch from Jira"
+                           OnClick="FetchJiraNameAsync"
+                           Disabled="@(string.IsNullOrWhiteSpace(_form.AtlassianAccountId) || _fetchingJira)" />
+            @if (_fetchingJira)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+            }
+        </div>
+
+        <MudSelect T="int" Label="Timelog Employee"
+                   Value="_form.TimelogUserId"
+                   ValueChanged="OnTimelogUserChangedAsync"
+                   Required="true" AnchorOrigin="Origin.BottomLeft" Class="mb-3"
+                   Disabled="@(_timelogUsers.Count == 0)"
+                   HelperText="@(_timelogUsers.Count == 0 ? "Loading employees..." : null)">
+            <MudSelectItem T="int" Value="0">— select employee —</MudSelectItem>
+            @foreach (var u in _timelogUsers)
+            {
+                <MudSelectItem T="int" Value="@u.UserId">@u.FullName (@u.UserId)</MudSelectItem>
+            }
+        </MudSelect>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _dialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAsync"
+                   Disabled="@(!CanSave)">
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private List<EmployeeMappingDto> _mappings = [];
+    private List<KnownAccountIdDto> _unmappedAccountIds = [];
+    private List<TimelogUserSummaryDto> _timelogUsers = [];
+
+    private bool _loadingUnmapped;
+    private bool _dialogOpen;
+    private string? _editingAccountId;
+    private int? _editingId;
+    private MappingFormModel _form = new();
+    private bool _fetchingJira;
+
+    private bool CanSave =>
+        !string.IsNullOrWhiteSpace(_form.AtlassianAccountId) && _form.TimelogUserId > 0;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _mappings = (await EmployeeMappingService.GetAllAsync()).ToList();
+        _loading = false;
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        _editingId = null;
+        _editingAccountId = null;
+        _form = new MappingFormModel();
+        _timelogUsers = [];
+        _unmappedAccountIds = [];
+        _loadingUnmapped = true;
+        _dialogOpen = true;
+        await Task.WhenAll(LoadTimelogUsersAsync(), LoadUnmappedAccountIdsAsync());
+    }
+
+    private async Task LoadUnmappedAccountIdsAsync()
+    {
+        _unmappedAccountIds = (await EmployeeMappingService.GetUnmappedAccountIdsAsync()).ToList();
+        _loadingUnmapped = false;
+        StateHasChanged();
+    }
+
+    private async Task OpenEditDialog(EmployeeMappingDto mapping)
+    {
+        _editingId = mapping.Id;
+        _editingAccountId = mapping.AtlassianAccountId;
+        _form = new MappingFormModel
+        {
+            AtlassianAccountId = mapping.AtlassianAccountId,
+            DisplayName = mapping.DisplayName,
+            TimelogUserId = mapping.TimelogUserId,
+        };
+        _timelogUsers = [];
+        _dialogOpen = true;
+        await LoadTimelogUsersAsync();
+    }
+
+    private async Task LoadTimelogUsersAsync()
+    {
+        _timelogUsers = (await EmployeeMappingService.GetTimelogUsersAsync()).ToList();
+        StateHasChanged();
+    }
+
+    private async Task OnAccountIdSelectedAsync(string? accountId)
+    {
+        _form.AtlassianAccountId = accountId ?? "";
+        if (string.IsNullOrWhiteSpace(accountId)) return;
+
+        // Use cached display name from the dropdown if available, otherwise fetch from Jira
+        var cached = _unmappedAccountIds.FirstOrDefault(x => x.AccountId == accountId);
+        if (cached?.DisplayName is not null)
+            _form.DisplayName = cached.DisplayName;
+        else
+            await FetchJiraNameAsync();
+    }
+
+    private void OnTimelogUserChangedAsync(int userId)
+    {
+        _form.TimelogUserId = userId;
+        var user = _timelogUsers.FirstOrDefault(u => u.UserId == userId);
+        _form.TimelogUserDisplayName = user?.FullName;
+    }
+
+    private async Task FetchJiraNameAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.AtlassianAccountId)) return;
+        _fetchingJira = true;
+        try
+        {
+            var name = await EmployeeMappingService.FetchJiraDisplayNameAsync(_form.AtlassianAccountId);
+            if (name is not null)
+                _form.DisplayName = name;
+            else
+                Snackbar.Add("Could not retrieve display name from Jira.", Severity.Warning);
+        }
+        finally
+        {
+            _fetchingJira = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        var accountId = _editingAccountId ?? _form.AtlassianAccountId;
+        await EmployeeMappingService.UpsertAsync(new UpsertEmployeeMappingRequest(
+            accountId,
+            _form.DisplayName,
+            _form.TimelogUserId,
+            _form.TimelogUserDisplayName));
+
+        _dialogOpen = false;
+        Snackbar.Add("Mapping saved.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Delete Mapping",
+            "Delete this employee mapping? This cannot be undone.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+
+        await EmployeeMappingService.DeleteAsync(id);
+        Snackbar.Add("Mapping deleted.", Severity.Info);
+        await LoadAsync();
+    }
+
+    private class MappingFormModel
+    {
+        public string AtlassianAccountId { get; set; } = "";
+        public string? DisplayName { get; set; }
+        public int TimelogUserId { get; set; }
+        public string? TimelogUserDisplayName { get; set; }
+    }
+}

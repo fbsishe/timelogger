@@ -3,6 +3,7 @@
 @inject IMappingRuleService MappingRuleService
 @inject ITimelogDataService TimelogDataService
 @inject IEntryService EntryService
+@inject IApplyMappingsService ApplyMappingsService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 
@@ -63,6 +64,10 @@ else
                 <MudIconButton Icon="@Icons.Material.Filled.Science" Size="Size.Small"
                                OnClick="@(() => TestRuleAsync(context.Id))"
                                Title="Test rule" />
+                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
+                               Color="Color.Success"
+                               OnClick="@(() => ApplyRuleAsync(context.Id))"
+                               Title="Apply rule to pending entries" />
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                OnClick="@(() => OpenEditDialog(context))" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
@@ -128,7 +133,9 @@ else
             <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Regex">Regex</MudSelectItem>
         </MudSelect>
         <MudTextField @bind-Value="_form.MatchValue" Label="Match Value" Required="true" Class="mb-3" />
-        <MudSelect T="int" Label="Project" @bind-Value="_form.TimelogProjectId"
+        <MudSelect T="int" Label="Project"
+                   Value="_form.TimelogProjectId"
+                   ValueChanged="OnProjectChangedAsync"
                    Required="true" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
             @foreach (var p in _projects)
             {
@@ -227,6 +234,13 @@ else
         await LoadAsync();
     }
 
+    private async Task OnProjectChangedAsync(int projectId)
+    {
+        _form.TimelogProjectId = projectId;
+        _form.TimelogTaskId = null;
+        _tasks = (await TimelogDataService.GetTasksByProjectAsync(projectId)).ToList();
+    }
+
     private async Task SetEnabledAsync(int id, bool enabled)
     {
         await MappingRuleService.SetEnabledAsync(id, enabled);
@@ -242,6 +256,15 @@ else
     private async Task TestRuleAsync(int id)
     {
         _testResults = (await MappingRuleService.TestRuleAsync(id)).ToList();
+    }
+
+    private async Task ApplyRuleAsync(int id)
+    {
+        var mapped = await ApplyMappingsService.ApplyRuleAsync(id);
+        if (mapped > 0)
+            Snackbar.Add($"Mapped {mapped} entr{(mapped == 1 ? "y" : "ies")}.", Severity.Success);
+        else
+            Snackbar.Add("No pending entries matched this rule.", Severity.Info);
     }
 
     private class RuleFormModel

@@ -77,11 +77,12 @@ public class TempoImportService(
 
             var metadataJson = BuildMetadataJson(worklog, customFields);
 
+            var accountId = worklog.Author?.AccountId ?? "unknown";
             var entry = new ImportedEntry
             {
                 ImportSourceId = importSourceId,
                 ExternalId = externalId,
-                UserEmail = worklog.Author?.AccountId ?? "unknown",
+                UserEmail = accountId,
                 WorkDate = DateOnly.Parse(worklog.StartDate),
                 TimeSpentSeconds = worklog.TimeSpentSeconds,
                 Description = worklog.Description,

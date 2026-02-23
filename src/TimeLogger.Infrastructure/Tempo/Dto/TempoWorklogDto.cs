@@ -46,6 +46,9 @@ public class TempoAuthor
     [JsonPropertyName("accountId")]
     public string AccountId { get; set; } = "";
 
+    [JsonPropertyName("displayName")]
+    public string? DisplayName { get; set; }
+
     [JsonPropertyName("self")]
     public string? Self { get; set; }
 }

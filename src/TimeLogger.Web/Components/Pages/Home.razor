@@ -96,7 +96,9 @@ else
             <MudText Class="mb-2">
                 <b>@_mapTarget.IssueKey</b> – @_mapTarget.Description (@_mapTarget.WorkDate.ToString("yyyy-MM-dd"))
             </MudText>
-            <MudSelect T="int?" Label="Project" @bind-Value="_selectedProjectId"
+            <MudSelect T="int?" Label="Project"
+                       Value="_selectedProjectId"
+                       ValueChanged="OnProjectChangedAsync"
                        HelperText="Required" Required="true"
                        AnchorOrigin="Origin.BottomLeft">
                 @foreach (var p in _projects)

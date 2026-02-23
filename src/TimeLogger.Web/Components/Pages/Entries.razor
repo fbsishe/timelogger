@@ -33,6 +33,7 @@ else
               RowsPerPage="50">
         <HeaderContent>
             <MudTh>Date</MudTh>
+            <MudTh>Person</MudTh>
             <MudTh>Source</MudTh>
             <MudTh>Issue Key</MudTh>
             <MudTh>Project Key</MudTh>
@@ -43,6 +44,7 @@ else
         </HeaderContent>
         <RowTemplate>
             <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+            <MudTd>@context.UserEmail</MudTd>
             <MudTd>@context.SourceName</MudTd>
             <MudTd>@context.IssueKey</MudTd>
             <MudTd>@context.ProjectKey</MudTd>
@@ -84,7 +86,9 @@ else
             <MudText Class="mb-2">
                 <b>@_mapTarget.IssueKey</b> – @_mapTarget.Description (@_mapTarget.WorkDate.ToString("yyyy-MM-dd"))
             </MudText>
-            <MudSelect T="int?" Label="Project" @bind-Value="_selectedProjectId"
+            <MudSelect T="int?" Label="Project"
+                       Value="_selectedProjectId"
+                       ValueChanged="OnProjectChangedAsync"
                        Required="true" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
                 @foreach (var p in _projects)
                 {
@@ -145,6 +149,15 @@ else
         _selectedTaskId = null;
         _tasks = [];
         _mapDialogOpen = true;
+    }
+
+    private async Task OnProjectChangedAsync(int? projectId)
+    {
+        _selectedProjectId = projectId;
+        _selectedTaskId = null;
+        _tasks = projectId.HasValue
+            ? (await TimelogDataService.GetTasksByProjectAsync(projectId.Value)).ToList()
+            : [];
     }
 
     private async Task SaveMapAsync()

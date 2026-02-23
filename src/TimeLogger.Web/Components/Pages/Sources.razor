@@ -26,6 +26,11 @@ else
                    OnClick="PollAllAsync" Disabled="@_polling">
             @(_polling ? "Polling…" : "Poll Now")
         </MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                   StartIcon="@Icons.Material.Filled.DateRange"
+                   OnClick="OpenImportRangeDialog" Disabled="@_importing">
+            Import Range
+        </MudButton>
     </MudStack>
 
     @if (_sources.Count == 0)
@@ -89,6 +94,30 @@ else
     }
 }
 
+@* Import Range dialog *@
+<MudDialog @bind-Visible="_importRangeOpen">
+    <TitleContent>Import Tempo Range</TitleContent>
+    <DialogContent>
+        <MudSelect T="int" Label="Source" @bind-Value="_importSourceId"
+                   AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+            @foreach (var s in _tempoSources)
+            {
+                <MudSelectItem T="int" Value="@s.Id">@s.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudDatePicker Label="From" @bind-Date="_importFrom" Class="mb-3" />
+        <MudDatePicker Label="To" @bind-Date="_importTo" Class="mb-3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _importRangeOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="RunImportRangeAsync"
+                   Disabled="@(_importFrom is null || _importTo is null || _importSourceId == 0 || _importing)">
+            @(_importing ? "Importing…" : "Import")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
 @* Add / Edit dialog *@
 <MudDialog @bind-Visible="_dialogOpen">
     <TitleContent>@(_editingId.HasValue ? "Edit Source" : "Add Source")</TitleContent>
@@ -122,6 +151,12 @@ else
 @code {
     private bool _loading = true;
     private bool _polling;
+    private bool _importing;
+    private bool _importRangeOpen;
+    private int _importSourceId;
+    private DateTime? _importFrom = DateTime.Today.AddMonths(-1);
+    private DateTime? _importTo = DateTime.Today;
+    private List<ImportSourceDto> _tempoSources = [];
     private List<ImportSourceDto> _sources = [];
     private bool _dialogOpen;
     private int? _editingId;
@@ -133,6 +168,7 @@ else
     {
         _loading = true;
         _sources = (await ImportSourceService.GetAllAsync()).ToList();
+        _tempoSources = _sources.Where(s => s.SourceType == TimeLogger.Domain.SourceType.Tempo).ToList();
         _loading = false;
     }
 
@@ -182,6 +218,37 @@ else
         await ImportSourceService.TriggerPollAllAsync();
         Snackbar.Add("Poll job enqueued. Refresh in a moment to see imported entries.", Severity.Success);
         _polling = false;
+    }
+
+    private void OpenImportRangeDialog()
+    {
+        _importSourceId = _tempoSources.FirstOrDefault()?.Id ?? 0;
+        _importFrom = DateTime.Today.AddMonths(-1);
+        _importTo = DateTime.Today;
+        _importRangeOpen = true;
+    }
+
+    private async Task RunImportRangeAsync()
+    {
+        if (_importFrom is null || _importTo is null || _importSourceId == 0) return;
+        _importing = true;
+        try
+        {
+            var from = DateOnly.FromDateTime(_importFrom.Value);
+            var to = DateOnly.FromDateTime(_importTo.Value);
+            var count = await ImportSourceService.ImportRangeAsync(_importSourceId, from, to);
+            _importRangeOpen = false;
+            Snackbar.Add($"Imported {count} new entries.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Import failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
     }
 
     private async Task DeleteAsync(int id)

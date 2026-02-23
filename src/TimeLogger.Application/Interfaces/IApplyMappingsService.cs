@@ -17,4 +17,10 @@ public interface IApplyMappingsService
     /// without persisting any changes. Used for 'Test Rule' previews in the UI.
     /// </summary>
     Task<IReadOnlyList<ImportedEntry>> TestRuleAsync(int ruleId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies a single rule to all pending entries that match it, persisting the changes.
+    /// </summary>
+    /// <returns>Number of entries that were newly mapped.</returns>
+    Task<int> ApplyRuleAsync(int ruleId, CancellationToken cancellationToken = default);
 }

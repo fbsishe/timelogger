@@ -73,6 +73,36 @@ public class ApplyMappingsService(
             .AsReadOnly();
     }
 
+    public async Task<int> ApplyRuleAsync(int ruleId, CancellationToken cancellationToken = default)
+    {
+        var rule = await db.MappingRules
+            .Include(r => r.TimelogProject)
+            .Include(r => r.TimelogTask)
+            .FirstOrDefaultAsync(r => r.Id == ruleId, cancellationToken)
+            ?? throw new InvalidOperationException($"MappingRule {ruleId} not found.");
+
+        var entries = await db.ImportedEntries
+            .Where(e => e.Status == ImportStatus.Pending)
+            .Include(e => e.ImportSource)
+            .ToListAsync(cancellationToken);
+
+        int mapped = 0;
+        foreach (var entry in entries.Where(e => engine.Matches(rule, e)))
+        {
+            entry.Status = ImportStatus.Mapped;
+            entry.MappingRuleId = rule.Id;
+            entry.TimelogProjectId = rule.TimelogProject.Id;
+            entry.TimelogTaskId = rule.TimelogTask?.Id;
+            mapped++;
+        }
+
+        if (mapped > 0)
+            await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation("Rule {RuleId} mapped {Count} entries", ruleId, mapped);
+        return mapped;
+    }
+
     private async Task<List<MappingRule>> LoadRulesAsync(CancellationToken cancellationToken) =>
         await db.MappingRules
             .Where(r => r.IsEnabled)
