@@ -111,9 +111,6 @@ public static class DependencyInjection
             job => job.ExecuteAsync(CancellationToken.None),
             dailyCron);
 
-        RecurringJob.AddOrUpdate<SubmitMappedEntriesJob>(
-            SubmitMappedEntriesJob.JobId,
-            job => job.ExecuteAsync(CancellationToken.None),
-            dailyCron);
+        // Submission is manual-only — no recurring job registered.
     }
 }
