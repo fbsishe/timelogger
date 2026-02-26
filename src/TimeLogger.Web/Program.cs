@@ -1,9 +1,11 @@
 using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Events;
 using TimeLogger.Infrastructure;
+using TimeLogger.Infrastructure.Persistence;
 using TimeLogger.Web.Components;
 
 // Bootstrap logger: captures failures before full DI is set up
@@ -44,6 +46,13 @@ try
         .AddInteractiveServerComponents();
 
     var app = builder.Build();
+
+    // Create DB and apply all pending migrations on startup
+    using (var scope = app.Services.CreateScope())
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.MigrateAsync();
+    }
 
     if (!app.Environment.IsDevelopment())
     {
