@@ -37,7 +37,8 @@ public static class DependencyInjection
             .ConfigureHttpClient((_, client) =>
             {
                 var opts = configuration.GetSection(TimelogOptions.SectionName).Get<TimelogOptions>();
-                client.BaseAddress = new Uri(opts!.BaseUrl);
+                if (Uri.TryCreate(opts?.BaseUrl, UriKind.Absolute, out var timelogUri))
+                    client.BaseAddress = timelogUri;
             })
             .AddHttpMessageHandler<BearerTokenHandler>();
 
@@ -49,8 +50,8 @@ public static class DependencyInjection
             .ConfigureHttpClient((_, client) =>
             {
                 var opts = configuration.GetSection(JiraOptions.SectionName).Get<JiraOptions>();
-                if (opts?.BaseUrl is not null)
-                    client.BaseAddress = new Uri(opts.BaseUrl);
+                if (Uri.TryCreate(opts?.BaseUrl, UriKind.Absolute, out var jiraUri))
+                    client.BaseAddress = jiraUri;
             })
             .AddHttpMessageHandler<JiraBasicAuthHandler>();
 
