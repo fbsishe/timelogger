@@ -61,6 +61,12 @@ else
                    Disabled="@(_submitting || _readyEntries.Count == 0)">
             @(_submitting ? "Submitting…" : $"Submit All ({_readyEntries.Count})")
         </MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                   StartIcon="@Icons.Material.Filled.Block"
+                   OnClick="SkipSelectedAsync"
+                   Disabled="@(_submitting || !_selectedEntries.Any())">
+            Skip Selected (@_selectedEntries.Count)
+        </MudButton>
         <MudButton Variant="Variant.Text"
                    StartIcon="@Icons.Material.Filled.Refresh"
                    OnClick="LoadAsync">
@@ -89,6 +95,7 @@ else
                 <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.Hours)">Hours</MudTableSortLabel></MudTh>
                 <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.UserDisplay ?? string.Empty)">Employee</MudTableSortLabel></MudTh>
                 <MudTh><MudTableSortLabel SortBy="new Func<ReadyEntryItem, object>(x => x.TimelogTaskName ?? string.Empty)">Timelog Task</MudTableSortLabel></MudTh>
+                <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
@@ -100,6 +107,13 @@ else
                 <MudTd>@context.Hours</MudTd>
                 <MudTd>@(context.UserDisplay ?? "—")</MudTd>
                 <MudTd>@(context.TimelogTaskName ?? "—")</MudTd>
+                <MudTd>
+                    <MudTooltip Text="Skip — hide this entry without submitting">
+                        <MudIconButton Icon="@Icons.Material.Filled.Block"
+                                       Size="Size.Small" Color="Color.Warning"
+                                       OnClick="@(() => SkipOneAsync(context.Id))" />
+                    </MudTooltip>
+                </MudTd>
             </RowTemplate>
         </MudTable>
     }
@@ -196,6 +210,29 @@ else
         await SubmissionService.SubmitSelectedAsync(ids);
         Snackbar.Add($"Submitted {ids.Count} entr{(ids.Count == 1 ? "y" : "ies")}.", Severity.Success);
         _submitting = false;
+        await LoadAsync();
+    }
+
+    private async Task SkipOneAsync(int entryId)
+    {
+        await SubmissionService.SkipAsync(entryId);
+        await LoadAsync();
+    }
+
+    private async Task SkipSelectedAsync()
+    {
+        if (!_selectedEntries.Any()) return;
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Skip Selected",
+            $"Hide {_selectedEntries.Count} selected entr{(_selectedEntries.Count == 1 ? "y" : "ies")} from submission? They will be marked Ignored.",
+            yesText: "Skip", cancelText: "Cancel");
+        if (confirmed != true) return;
+
+        foreach (var entry in _selectedEntries.ToList())
+            await SubmissionService.SkipAsync(entry.Id);
+
+        Snackbar.Add($"Skipped {_selectedEntries.Count} entr{(_selectedEntries.Count == 1 ? "y" : "ies")}.", Severity.Info);
         await LoadAsync();
     }
 

@@ -123,4 +123,12 @@ public class SubmissionService(
         foreach (var entry in entries)
             await submitter.SubmitAsync(entry, ct);
     }
+
+    public async Task SkipAsync(int entryId, CancellationToken ct = default)
+    {
+        var entry = await db.ImportedEntries.FindAsync([entryId], ct)
+            ?? throw new InvalidOperationException($"Entry {entryId} not found.");
+        entry.Status = ImportStatus.Ignored;
+        await db.SaveChangesAsync(ct);
+    }
 }

@@ -35,4 +35,5 @@ public interface ISubmissionService
     Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(CancellationToken ct = default);
     Task TriggerSubmitAllAsync(CancellationToken ct = default);
     Task SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default);
+    Task SkipAsync(int entryId, CancellationToken ct = default);
 }
