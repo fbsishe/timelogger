@@ -403,10 +403,6 @@ namespace TimeLogger.Infrastructure.Migrations
                         .HasForeignKey("TimelogTaskId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.Navigation("Conditions");
-
-                    b.Navigation("MatchedEntries");
-
                     b.Navigation("TimelogProject");
 
                     b.Navigation("TimelogTask");
