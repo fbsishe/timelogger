@@ -29,23 +29,29 @@ public sealed class MappingEngine : IMappingEngine
 
     public bool Matches(MappingRule rule, ImportedEntry entry)
     {
-        var fieldValue = ResolveField(rule.MatchField, entry);
+        if (!rule.Conditions.Any()) return false;
+        return rule.Conditions.All(c => MatchesCondition(c, entry));
+    }
+
+    private static bool MatchesCondition(MappingRuleCondition c, ImportedEntry entry)
+    {
+        var fieldValue = ResolveField(c.MatchField, entry);
         if (fieldValue is null)
             return false;
 
-        return rule.MatchOperator switch
+        return c.MatchOperator switch
         {
             Domain.MatchOperator.Equals =>
-                string.Equals(fieldValue, rule.MatchValue, StringComparison.OrdinalIgnoreCase),
+                string.Equals(fieldValue, c.MatchValue, StringComparison.OrdinalIgnoreCase),
 
             Domain.MatchOperator.Contains =>
-                fieldValue.Contains(rule.MatchValue, StringComparison.OrdinalIgnoreCase),
+                fieldValue.Contains(c.MatchValue, StringComparison.OrdinalIgnoreCase),
 
             Domain.MatchOperator.StartsWith =>
-                fieldValue.StartsWith(rule.MatchValue, StringComparison.OrdinalIgnoreCase),
+                fieldValue.StartsWith(c.MatchValue, StringComparison.OrdinalIgnoreCase),
 
             Domain.MatchOperator.Regex =>
-                Regex.IsMatch(fieldValue, rule.MatchValue,
+                Regex.IsMatch(fieldValue, c.MatchValue,
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)),
 
             _ => false,

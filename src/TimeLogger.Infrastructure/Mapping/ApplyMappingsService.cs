@@ -59,6 +59,7 @@ public class ApplyMappingsService(
         var rule = await db.MappingRules
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.Conditions)
             .FirstOrDefaultAsync(r => r.Id == ruleId, cancellationToken)
             ?? throw new InvalidOperationException($"MappingRule {ruleId} not found.");
 
@@ -78,6 +79,7 @@ public class ApplyMappingsService(
         var rule = await db.MappingRules
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.Conditions)
             .FirstOrDefaultAsync(r => r.Id == ruleId, cancellationToken)
             ?? throw new InvalidOperationException($"MappingRule {ruleId} not found.");
 
@@ -108,6 +110,7 @@ public class ApplyMappingsService(
             .Where(r => r.IsEnabled)
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.Conditions)
             .OrderBy(r => r.Priority)
             .ToListAsync(cancellationToken);
 }

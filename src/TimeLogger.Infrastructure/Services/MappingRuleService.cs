@@ -9,17 +9,24 @@ namespace TimeLogger.Infrastructure.Services;
 
 public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappingRuleService
 {
-    public async Task<IReadOnlyList<MappingRuleDto>> GetAllAsync(CancellationToken ct = default) =>
-        await db.MappingRules
+    public async Task<IReadOnlyList<MappingRuleDto>> GetAllAsync(CancellationToken ct = default)
+    {
+        var rules = await db.MappingRules
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.Conditions)
             .OrderBy(r => r.Priority)
-            .Select(r => new MappingRuleDto(
-                r.Id, r.Name, r.SourceType, r.MatchField, r.MatchOperator, r.MatchValue,
-                r.TimelogProjectId, r.TimelogProject.Name,
-                r.TimelogTaskId, r.TimelogTask != null ? r.TimelogTask.Name : null,
-                r.Priority, r.IsEnabled))
             .ToListAsync(ct);
+
+        return rules.Select(r => new MappingRuleDto(
+            r.Id, r.Name, r.SourceType,
+            r.Conditions.Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue)).ToList().AsReadOnly(),
+            r.TimelogProjectId, r.TimelogProject.Name,
+            r.TimelogTaskId, r.TimelogTask?.Name,
+            r.Priority, r.IsEnabled))
+            .ToList()
+            .AsReadOnly();
+    }
 
     public async Task<MappingRule> CreateAsync(CreateMappingRuleRequest req, CancellationToken ct = default)
     {
@@ -27,13 +34,16 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         {
             Name = req.Name,
             SourceType = req.SourceType,
-            MatchField = req.MatchField,
-            MatchOperator = req.MatchOperator,
-            MatchValue = req.MatchValue,
             TimelogProjectId = req.TimelogProjectId,
             TimelogTaskId = req.TimelogTaskId,
             Priority = req.Priority,
             IsEnabled = true,
+            Conditions = req.Conditions.Select(c => new MappingRuleCondition
+            {
+                MatchField = c.MatchField,
+                MatchOperator = c.MatchOperator,
+                MatchValue = c.MatchValue,
+            }).ToList(),
         };
         db.MappingRules.Add(rule);
         await db.SaveChangesAsync(ct);
@@ -42,16 +52,25 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
 
     public async Task UpdateAsync(int id, CreateMappingRuleRequest req, CancellationToken ct = default)
     {
-        var rule = await db.MappingRules.FindAsync([id], ct)
+        var rule = await db.MappingRules
+            .Include(r => r.Conditions)
+            .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new InvalidOperationException($"Rule {id} not found.");
+
         rule.Name = req.Name;
         rule.SourceType = req.SourceType;
-        rule.MatchField = req.MatchField;
-        rule.MatchOperator = req.MatchOperator;
-        rule.MatchValue = req.MatchValue;
         rule.TimelogProjectId = req.TimelogProjectId;
         rule.TimelogTaskId = req.TimelogTaskId;
         rule.Priority = req.Priority;
+
+        db.MappingRuleConditions.RemoveRange(rule.Conditions);
+        rule.Conditions = req.Conditions.Select(c => new MappingRuleCondition
+        {
+            MatchField = c.MatchField,
+            MatchOperator = c.MatchOperator,
+            MatchValue = c.MatchValue,
+        }).ToList();
+
         await db.SaveChangesAsync(ct);
     }
 
@@ -86,7 +105,9 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
 
     public async Task<IReadOnlyList<EntryListItem>> TestRuleAsync(int id, CancellationToken ct = default)
     {
-        var rule = await db.MappingRules.FindAsync([id], ct)
+        var rule = await db.MappingRules
+            .Include(r => r.Conditions)
+            .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new InvalidOperationException($"Rule {id} not found.");
 
         var entries = await db.ImportedEntries

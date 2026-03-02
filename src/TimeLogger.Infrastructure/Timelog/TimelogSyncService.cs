@@ -22,7 +22,7 @@ public class TimelogSyncService(
 
         foreach (var dto in projectDtos)
         {
-            var externalId = dto.ProjectId.ToString();
+            var externalId = dto.Id;
 
             var project = await db.TimelogProjects
                 .FirstOrDefaultAsync(p => p.ExternalId == externalId, cancellationToken);
@@ -53,7 +53,7 @@ public class TimelogSyncService(
         }
 
         // Mark projects no longer returned as inactive
-        var activeExternalIds = projectDtos.Select(p => p.ProjectId.ToString()).ToHashSet();
+        var activeExternalIds = projectDtos.Select(p => p.Id).ToHashSet();
         var staleProjects = await db.TimelogProjects
             .Where(p => p.IsActive && !activeExternalIds.Contains(p.ExternalId))
             .ToListAsync(cancellationToken);
@@ -92,7 +92,7 @@ public class TimelogSyncService(
 
         foreach (var dto in taskDtos)
         {
-            var externalId = dto.TaskId.ToString();
+            var externalId = dto.Id ?? dto.TaskId.ToString();
             var task = existingTasks.FirstOrDefault(t => t.ExternalId == externalId);
 
             if (task is null)
@@ -116,7 +116,7 @@ public class TimelogSyncService(
         }
 
         // Mark tasks no longer returned as inactive
-        var activeTaskIds = taskDtos.Select(t => t.TaskId.ToString()).ToHashSet();
+        var activeTaskIds = taskDtos.Select(t => t.Id ?? t.TaskId.ToString()).ToHashSet();
         foreach (var stale in existingTasks.Where(t => t.IsActive && !activeTaskIds.Contains(t.ExternalId)))
         {
             stale.IsActive = false;

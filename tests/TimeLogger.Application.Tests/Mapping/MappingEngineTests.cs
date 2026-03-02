@@ -56,9 +56,15 @@ public class MappingEngineTests
         {
             Id = 1,
             Name = "Test Rule",
-            MatchField = matchField,
-            MatchOperator = op,
-            MatchValue = matchValue,
+            Conditions =
+            [
+                new MappingRuleCondition
+                {
+                    MatchField = matchField,
+                    MatchOperator = op,
+                    MatchValue = matchValue,
+                },
+            ],
             Priority = priority,
             SourceType = sourceType,
             TimelogProjectId = projectId,
@@ -259,6 +265,60 @@ public class MappingEngineTests
     }
 
     // ------------------------------------------------------------------
+    // Multi-condition (AND logic)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void MultiCondition_MatchesWhenAllConditionsSatisfied()
+    {
+        var rule = new MappingRule
+        {
+            Id = 1, Name = "Multi", Priority = 1,
+            TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
+            Conditions =
+            [
+                new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" },
+                new MappingRuleCondition { MatchField = "IssueKey", MatchOperator = MatchOperator.StartsWith, MatchValue = "PROJ-" },
+            ],
+        };
+
+        var entry = MakeEntry(projectKey: "PROJ", issueKey: "PROJ-42");
+        Assert.True(_engine.Matches(rule, entry));
+    }
+
+    [Fact]
+    public void MultiCondition_DoesNotMatchWhenOnlyOneConditionSatisfied()
+    {
+        var rule = new MappingRule
+        {
+            Id = 1, Name = "Multi", Priority = 1,
+            TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
+            Conditions =
+            [
+                new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" },
+                new MappingRuleCondition { MatchField = "IssueKey", MatchOperator = MatchOperator.StartsWith, MatchValue = "BACKEND-" },
+            ],
+        };
+
+        // ProjectKey matches but IssueKey does not
+        var entry = MakeEntry(projectKey: "PROJ", issueKey: "PROJ-42");
+        Assert.False(_engine.Matches(rule, entry));
+    }
+
+    [Fact]
+    public void Matches_ReturnsFalseWhenNoConditions()
+    {
+        var rule = new MappingRule
+        {
+            Id = 1, Name = "Empty", Priority = 1,
+            TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
+            Conditions = [],
+        };
+
+        Assert.False(_engine.Matches(rule, MakeEntry()));
+    }
+
+    // ------------------------------------------------------------------
     // Priority ordering
     // ------------------------------------------------------------------
 
@@ -272,14 +332,14 @@ public class MappingEngineTests
         {
             new()
             {
-                Id = 2, Name = "Low priority", MatchField = "ProjectKey",
-                MatchOperator = MatchOperator.Equals, MatchValue = "PROJ",
+                Id = 2, Name = "Low priority",
+                Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
                 Priority = 20, TimelogProjectId = 2, TimelogProject = projectB, IsEnabled = true,
             },
             new()
             {
-                Id = 1, Name = "High priority", MatchField = "ProjectKey",
-                MatchOperator = MatchOperator.Equals, MatchValue = "PROJ",
+                Id = 1, Name = "High priority",
+                Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
                 Priority = 5, TimelogProjectId = 1, TimelogProject = projectA, IsEnabled = true,
             },
         };
@@ -297,8 +357,8 @@ public class MappingEngineTests
         {
             new()
             {
-                Id = 1, Name = "Rule", MatchField = "ProjectKey",
-                MatchOperator = MatchOperator.Equals, MatchValue = "OTHER",
+                Id = 1, Name = "Rule",
+                Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "OTHER" }],
                 Priority = 1, TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
             },
         };
@@ -327,8 +387,8 @@ public class MappingEngineTests
         {
             new()
             {
-                Id = 1, Name = "Disabled", MatchField = "ProjectKey",
-                MatchOperator = MatchOperator.Equals, MatchValue = "PROJ",
+                Id = 1, Name = "Disabled",
+                Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
                 Priority = 1, TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = false,
             },
         };
@@ -348,8 +408,8 @@ public class MappingEngineTests
         {
             new()
             {
-                Id = 1, Name = "Tempo only", MatchField = "ProjectKey",
-                MatchOperator = MatchOperator.Equals, MatchValue = "PROJ",
+                Id = 1, Name = "Tempo only",
+                Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
                 Priority = 1, SourceType = SourceType.Tempo,
                 TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
             },
@@ -368,8 +428,8 @@ public class MappingEngineTests
         {
             new()
             {
-                Id = 1, Name = "All sources", MatchField = "ProjectKey",
-                MatchOperator = MatchOperator.Equals, MatchValue = "PROJ",
+                Id = 1, Name = "All sources",
+                Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
                 Priority = 1, SourceType = null,
                 TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
             },
@@ -404,8 +464,8 @@ public class MappingEngineTests
         var task = MakeTask(10, 5);
         var rule = new MappingRule
         {
-            Id = 1, Name = "R", MatchField = "ProjectKey",
-            MatchOperator = MatchOperator.Equals, MatchValue = "X",
+            Id = 1, Name = "R",
+            Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "X" }],
             Priority = 1, TimelogProjectId = 5, TimelogProject = project,
             TimelogTaskId = 10, TimelogTask = task, IsEnabled = true,
         };

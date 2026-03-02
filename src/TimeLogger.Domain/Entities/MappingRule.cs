@@ -8,14 +8,7 @@ public class MappingRule
     /// <summary>Null means the rule applies to all source systems.</summary>
     public SourceType? SourceType { get; set; }
 
-    /// <summary>
-    /// Field on <see cref="ImportedEntry"/> (or a key inside MetadataJson) to inspect.
-    /// Use dot-notation for metadata fields, e.g. "metadata.customfield_10200".
-    /// </summary>
-    public required string MatchField { get; set; }
-
-    public MatchOperator MatchOperator { get; set; }
-    public required string MatchValue { get; set; }
+    public ICollection<MappingRuleCondition> Conditions { get; set; } = [];
 
     public int TimelogProjectId { get; set; }
     public TimelogProject TimelogProject { get; set; } = null!;

@@ -29,23 +29,23 @@ public class TimelogSyncServiceTests : IDisposable
     {
         // Arrange
         _apiClientMock
-            .Setup(c => c.GetProjectsAsync(true, null, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetProjectsAsync(true, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TafListResponse<TimelogProjectDto>
             {
-                Data =
+                Entities =
                 [
-                    new TimelogProjectDto { Id = "proj-guid-1", ProjectId = 42, Name = "Alpha Project" },
+                    new TafEntity<TimelogProjectDto> { Properties = new TimelogProjectDto { Id = "proj-guid-1", ProjectId = 42, Name = "Alpha Project" } },
                 ]
             });
 
         _apiClientMock
-            .Setup(c => c.GetTasksByProjectIdAsync(42, null, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetTasksByProjectIdAsync(42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TafListResponse<TimelogTaskDto>
             {
-                Data =
+                Entities =
                 [
-                    new TimelogTaskDto { Id = "task-guid-1", TaskId = 101, Name = "Development", ProjectId = 42 },
-                    new TimelogTaskDto { Id = "task-guid-2", TaskId = 102, Name = "Testing", ProjectId = 42 },
+                    new TafEntity<TimelogTaskDto> { Properties = new TimelogTaskDto { Id = "task-guid-1", TaskId = 101, Name = "Development", ProjectId = 42 } },
+                    new TafEntity<TimelogTaskDto> { Properties = new TimelogTaskDto { Id = "task-guid-2", TaskId = 102, Name = "Testing", ProjectId = 42 } },
                 ]
             });
 
@@ -78,15 +78,15 @@ public class TimelogSyncServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         _apiClientMock
-            .Setup(c => c.GetProjectsAsync(true, null, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetProjectsAsync(true, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TafListResponse<TimelogProjectDto>
             {
-                Data = [new TimelogProjectDto { Id = "proj-guid-1", ProjectId = 42, Name = "New Name" }]
+                Entities = [new TafEntity<TimelogProjectDto> { Properties = new TimelogProjectDto { Id = "proj-guid-1", ProjectId = 42, Name = "New Name" } }]
             });
 
         _apiClientMock
-            .Setup(c => c.GetTasksByProjectIdAsync(42, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TafListResponse<TimelogTaskDto> { Data = [] });
+            .Setup(c => c.GetTasksByProjectIdAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafListResponse<TimelogTaskDto> { Entities = [] });
 
         // Act
         await _sut.SyncAsync();
@@ -106,15 +106,15 @@ public class TimelogSyncServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         _apiClientMock
-            .Setup(c => c.GetProjectsAsync(true, null, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetProjectsAsync(true, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TafListResponse<TimelogProjectDto>
             {
-                Data = [new TimelogProjectDto { Id = "proj-1", ProjectId = 1, Name = "Active" }]
+                Entities = [new TafEntity<TimelogProjectDto> { Properties = new TimelogProjectDto { Id = "proj-1", ProjectId = 1, Name = "Active" } }]
             });
 
         _apiClientMock
-            .Setup(c => c.GetTasksByProjectIdAsync(1, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TafListResponse<TimelogTaskDto> { Data = [] });
+            .Setup(c => c.GetTasksByProjectIdAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafListResponse<TimelogTaskDto> { Entities = [] });
 
         // Act
         await _sut.SyncAsync();

@@ -3,13 +3,13 @@ using TimeLogger.Domain.Entities;
 
 namespace TimeLogger.Application.Services;
 
+public record MappingRuleConditionDto(string MatchField, MatchOperator MatchOperator, string MatchValue);
+
 public record MappingRuleDto(
     int Id,
     string Name,
     SourceType? SourceType,
-    string MatchField,
-    MatchOperator MatchOperator,
-    string MatchValue,
+    IReadOnlyList<MappingRuleConditionDto> Conditions,
     int TimelogProjectId,
     string TimelogProjectName,
     int? TimelogTaskId,
@@ -20,9 +20,7 @@ public record MappingRuleDto(
 public record CreateMappingRuleRequest(
     string Name,
     SourceType? SourceType,
-    string MatchField,
-    MatchOperator MatchOperator,
-    string MatchValue,
+    IReadOnlyList<MappingRuleConditionDto> Conditions,
     int TimelogProjectId,
     int? TimelogTaskId,
     int Priority);

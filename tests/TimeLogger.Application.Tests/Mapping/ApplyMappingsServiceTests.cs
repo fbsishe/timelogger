@@ -51,8 +51,8 @@ public class ApplyMappingsServiceTests : IDisposable
     {
         var rule = new MappingRule
         {
-            Name = "Rule", MatchField = "ProjectKey",
-            MatchOperator = MatchOperator.Equals, MatchValue = "PROJ",
+            Name = "Rule",
+            Conditions = [new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
             Priority = 1, TimelogProjectId = projectId, TimelogTaskId = taskId,
             IsEnabled = true,
         };
@@ -156,6 +156,7 @@ public class ApplyMappingsServiceTests : IDisposable
         var loadedRule = await _db.MappingRules
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.Conditions)
             .FirstAsync(r => r.Id == rule.Id);
 
         var matchEntry = await SeedEntryAsync(source.Id);

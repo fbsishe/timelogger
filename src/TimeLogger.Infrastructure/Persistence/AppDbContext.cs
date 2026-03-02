@@ -8,6 +8,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ImportSource> ImportSources => Set<ImportSource>();
     public DbSet<ImportedEntry> ImportedEntries => Set<ImportedEntry>();
     public DbSet<MappingRule> MappingRules => Set<MappingRule>();
+    public DbSet<MappingRuleCondition> MappingRuleConditions => Set<MappingRuleCondition>();
     public DbSet<TimelogProject> TimelogProjects => Set<TimelogProject>();
     public DbSet<TimelogTask> TimelogTasks => Set<TimelogTask>();
     public DbSet<SubmittedEntry> SubmittedEntries => Set<SubmittedEntry>();

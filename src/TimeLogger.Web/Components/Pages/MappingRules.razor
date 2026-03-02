@@ -28,7 +28,7 @@ else
             <MudTh>Priority</MudTh>
             <MudTh>Name</MudTh>
             <MudTh>Source</MudTh>
-            <MudTh>Match</MudTh>
+            <MudTh>Conditions</MudTh>
             <MudTh>→ Project / Task</MudTh>
             <MudTh>Enabled</MudTh>
             <MudTh>Actions</MudTh>
@@ -44,9 +44,19 @@ else
             <MudTd>@context.Name</MudTd>
             <MudTd>@(context.SourceType.HasValue ? context.SourceType.Value.ToString() : "All")</MudTd>
             <MudTd>
-                <MudChip T="string" Size="Size.Small" Color="Color.Default">@context.MatchField</MudChip>
-                @context.MatchOperator
-                <b>@context.MatchValue</b>
+                @for (int i = 0; i < context.Conditions.Count; i++)
+                {
+                    var cond = context.Conditions[i];
+                    if (i > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block" Style="color: var(--mud-palette-text-secondary)">AND</MudText>
+                    }
+                    <span>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default">@cond.MatchField</MudChip>
+                        @cond.MatchOperator
+                        <b>@cond.MatchValue</b>
+                    </span>
+                }
             </MudTd>
             <MudTd>
                 @context.TimelogProjectName
@@ -122,17 +132,46 @@ else
             <MudSelectItem T="TimeLogger.Domain.SourceType?" Value="@TimeLogger.Domain.SourceType.Tempo">Tempo</MudSelectItem>
             <MudSelectItem T="TimeLogger.Domain.SourceType?" Value="@TimeLogger.Domain.SourceType.FileUpload">FileUpload</MudSelectItem>
         </MudSelect>
-        <MudTextField @bind-Value="_form.MatchField" Label="Match Field"
-                      HelperText="ProjectKey | IssueKey | UserEmail | Description | Activity | metadata.key"
-                      Required="true" Class="mb-3" />
-        <MudSelect T="TimeLogger.Domain.MatchOperator" Label="Operator"
-                   @bind-Value="_form.MatchOperator" AnchorOrigin="Origin.BottomLeft" Class="mb-3">
-            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Equals">Equals</MudSelectItem>
-            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Contains">Contains</MudSelectItem>
-            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.StartsWith">StartsWith</MudSelectItem>
-            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Regex">Regex</MudSelectItem>
-        </MudSelect>
-        <MudTextField @bind-Value="_form.MatchValue" Label="Match Value" Required="true" Class="mb-3" />
+
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Conditions (all must match)</MudText>
+        @foreach (var cond in _form.Conditions)
+        {
+            var localCond = cond;
+            <MudPaper Class="pa-3 mb-2" Elevation="0" Outlined="true">
+                <MudGrid>
+                    <MudItem xs="4">
+                        <MudTextField @bind-Value="localCond.MatchField" Label="Match Field"
+                                      HelperText="ProjectKey | IssueKey | UserEmail | Description | Activity | metadata.key"
+                                      Required="true" />
+                    </MudItem>
+                    <MudItem xs="3">
+                        <MudSelect T="TimeLogger.Domain.MatchOperator" Label="Operator"
+                                   @bind-Value="localCond.MatchOperator" AnchorOrigin="Origin.BottomLeft">
+                            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Equals">Equals</MudSelectItem>
+                            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Contains">Contains</MudSelectItem>
+                            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.StartsWith">StartsWith</MudSelectItem>
+                            <MudSelectItem T="TimeLogger.Domain.MatchOperator" Value="TimeLogger.Domain.MatchOperator.Regex">Regex</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="4">
+                        <MudTextField @bind-Value="localCond.MatchValue" Label="Match Value" Required="true" />
+                    </MudItem>
+                    <MudItem xs="1" Class="d-flex align-center justify-center">
+                        @if (_form.Conditions.Count > 1)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Remove" Size="Size.Small"
+                                           Color="Color.Error"
+                                           OnClick="@(() => RemoveCondition(localCond))" />
+                        }
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+        }
+        <MudButton StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                   OnClick="AddCondition" Class="mb-3">
+            Add Condition
+        </MudButton>
+
         <MudSelect T="int" Label="Project"
                    Value="_form.TimelogProjectId"
                    ValueChanged="OnProjectChangedAsync"
@@ -194,9 +233,14 @@ else
         {
             Name = rule.Name,
             SourceType = rule.SourceType,
-            MatchField = rule.MatchField,
-            MatchOperator = rule.MatchOperator,
-            MatchValue = rule.MatchValue,
+            Conditions = rule.Conditions
+                .Select(c => new ConditionFormModel
+                {
+                    MatchField = c.MatchField,
+                    MatchOperator = c.MatchOperator,
+                    MatchValue = c.MatchValue,
+                })
+                .ToList(),
             TimelogProjectId = rule.TimelogProjectId,
             TimelogTaskId = rule.TimelogTaskId,
             Priority = rule.Priority,
@@ -205,11 +249,24 @@ else
         _dialogOpen = true;
     }
 
+    private void AddCondition() =>
+        _form.Conditions.Add(new ConditionFormModel());
+
+    private void RemoveCondition(ConditionFormModel cond) =>
+        _form.Conditions.Remove(cond);
+
     private async Task SaveAsync()
     {
         var req = new CreateMappingRuleRequest(
-            _form.Name, _form.SourceType, _form.MatchField, _form.MatchOperator,
-            _form.MatchValue, _form.TimelogProjectId, _form.TimelogTaskId, _form.Priority);
+            _form.Name,
+            _form.SourceType,
+            _form.Conditions
+                .Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue))
+                .ToList()
+                .AsReadOnly(),
+            _form.TimelogProjectId,
+            _form.TimelogTaskId,
+            _form.Priority);
 
         if (_editingId.HasValue)
             await MappingRuleService.UpdateAsync(_editingId.Value, req);
@@ -271,11 +328,16 @@ else
     {
         public string Name { get; set; } = "";
         public TimeLogger.Domain.SourceType? SourceType { get; set; }
-        public string MatchField { get; set; } = "";
-        public TimeLogger.Domain.MatchOperator MatchOperator { get; set; } = TimeLogger.Domain.MatchOperator.Equals;
-        public string MatchValue { get; set; } = "";
+        public List<ConditionFormModel> Conditions { get; set; } = [new()];
         public int TimelogProjectId { get; set; }
         public int? TimelogTaskId { get; set; }
         public int Priority { get; set; } = 1;
+    }
+
+    private class ConditionFormModel
+    {
+        public string MatchField { get; set; } = "";
+        public TimeLogger.Domain.MatchOperator MatchOperator { get; set; } = TimeLogger.Domain.MatchOperator.Equals;
+        public string MatchValue { get; set; } = "";
     }
 }

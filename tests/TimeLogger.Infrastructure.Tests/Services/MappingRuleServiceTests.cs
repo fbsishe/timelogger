@@ -43,9 +43,7 @@ public class MappingRuleServiceTests : IDisposable
         var rule = new MappingRule
         {
             Name = "Test Rule",
-            MatchField = "ProjectKey",
-            MatchOperator = MatchOperator.Equals,
-            MatchValue = "PROJ",
+            Conditions = [new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
             Priority = 1,
             TimelogProjectId = project.Id,
             IsEnabled = true,

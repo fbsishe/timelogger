@@ -10,8 +10,11 @@ public class MappingRuleConfiguration : IEntityTypeConfiguration<MappingRule>
     {
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Name).HasMaxLength(200).IsRequired();
-        builder.Property(x => x.MatchField).HasMaxLength(200).IsRequired();
-        builder.Property(x => x.MatchValue).HasMaxLength(500).IsRequired();
+
+        builder.HasMany(x => x.Conditions)
+            .WithOne(x => x.MappingRule)
+            .HasForeignKey(x => x.MappingRuleId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(x => x.TimelogProject)
             .WithMany(x => x.MappingRules)
