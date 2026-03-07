@@ -66,10 +66,13 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
     {
         var since = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-days));
 
-        return await db.ImportedEntries
+        var entries = await db.ImportedEntries
             .Where(e => e.WorkDate >= since)
             .Include(e => e.ImportSource)
-            .GroupBy(e => new { e.WorkDate, SourceName = e.ImportSource != null ? e.ImportSource.Name : "Unknown" })
+            .ToListAsync(ct);
+
+        return entries
+            .GroupBy(e => new { e.WorkDate, SourceName = e.ImportSource?.Name ?? "Unknown" })
             .Select(g => new ImportHistoryEntry(
                 g.Key.WorkDate,
                 g.Key.SourceName,
@@ -79,7 +82,7 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
                 g.Count(e => e.Status == ImportStatus.Submitted),
                 g.Count(e => e.Status == ImportStatus.Failed)))
             .OrderByDescending(e => e.WorkDate)
-            .ToListAsync(ct);
+            .ToList();
     }
 
     public Task TriggerPollAllAsync(CancellationToken ct = default)

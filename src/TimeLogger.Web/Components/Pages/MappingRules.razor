@@ -84,6 +84,9 @@ else
                                Color="Color.Success"
                                OnClick="@(() => ApplyRuleAsync(context.Id))"
                                Title="Apply rule to pending entries" />
+                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+                               Title="Clone rule"
+                               OnClick="@(() => OpenCloneDialog(context))" />
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                OnClick="@(() => OpenEditDialog(context))" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
@@ -129,7 +132,7 @@ else
 
 @* Create / Edit dialog *@
 <MudDialog @bind-Visible="_dialogOpen">
-    <TitleContent>@(_editingId.HasValue ? "Edit Rule" : "New Rule")</TitleContent>
+    <TitleContent>@(_editingId.HasValue ? "Edit Rule" : _isCloning ? "Clone Rule" : "New Rule")</TitleContent>
     <DialogContent>
         <MudTextField @bind-Value="_form.Name" Label="Rule Name" Required="true" Class="mb-3" />
         <MudSelect T="TimeLogger.Domain.SourceType?" Label="Source Type (blank = all)"
@@ -215,6 +218,7 @@ else
 
     private bool _dialogOpen;
     private int? _editingId;
+    private bool _isCloning;
     private RuleFormModel _form = new();
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -227,9 +231,37 @@ else
         _loading = false;
     }
 
+    private async Task OpenCloneDialog(MappingRuleDto rule)
+    {
+        _editingId = null;
+        _isCloning = true;
+        _form = new RuleFormModel
+        {
+            Name = $"{rule.Name} (copy)",
+            SourceType = rule.SourceType,
+            Conditions = rule.Conditions
+                .Select(c => new ConditionFormModel
+                {
+                    MatchField = c.MatchField,
+                    MatchOperator = c.MatchOperator,
+                    MatchValue = c.MatchValue,
+                })
+                .ToList(),
+            TimelogProjectId = rule.TimelogProjectId,
+            TimelogTaskId = rule.TimelogTaskId,
+            Priority = _rules.Count > 0 ? _rules.Max(r => r.Priority) + 1 : 1,
+            IncludeIssueKeyInComment = rule.IncludeIssueKeyInComment,
+        };
+        _tasks = rule.TimelogProjectId != 0
+            ? (await TimelogDataService.GetTasksByProjectAsync(rule.TimelogProjectId)).ToList()
+            : [];
+        _dialogOpen = true;
+    }
+
     private void OpenCreateDialog()
     {
         _editingId = null;
+        _isCloning = false;
         _form = new RuleFormModel { Priority = (_rules.Count > 0 ? _rules.Max(r => r.Priority) + 1 : 1) };
         _tasks = [];
         _dialogOpen = true;
@@ -238,6 +270,7 @@ else
     private void OpenEditDialog(MappingRuleDto rule)
     {
         _editingId = rule.Id;
+        _isCloning = false;
         _form = new RuleFormModel
         {
             Name = rule.Name,
