@@ -1,5 +1,6 @@
 @page "/settings"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "AdminOnly")]
 @inject IConfiguration Configuration
 
 <PageTitle>Settings – TimeLogger</PageTitle>

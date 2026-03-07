@@ -74,6 +74,7 @@ public static class DependencyInjection
         services.AddScoped<IFileImportService, FileImportService>();
         services.AddScoped<ISubmissionService, SubmissionService>();
         services.AddScoped<IEmployeeMappingService, EmployeeMappingService>();
+        services.AddScoped<IAppUserService, AppUserService>();
 
         // Hangfire
         var connectionString = configuration.GetConnectionString("Default")!;

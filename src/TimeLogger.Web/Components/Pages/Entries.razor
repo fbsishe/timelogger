@@ -1,5 +1,6 @@
 @page "/entries"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "AnyUser")]
 @using System.Text.Json
 @using System.Text.Json.Nodes
 @inject IEntryService EntryService

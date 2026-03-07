@@ -1,0 +1,108 @@
+@page "/users"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "AdminOnly")]
+@inject IAppUserService UserService
+@inject ITimelogDataService TimelogDataService
+@inject ISnackbar Snackbar
+
+<PageTitle>User Management – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">User Management</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudTable Items="_users" Hover="true" Dense="true" Striped="true" Elevation="1">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Email</MudTh>
+            <MudTh>Role</MudTh>
+            <MudTh>Linked Employee</MudTh>
+            <MudTh>Assigned Projects</MudTh>
+            <MudTh>Last Login</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.DisplayName</MudTd>
+            <MudTd>@context.Email</MudTd>
+            <MudTd Style="min-width:160px">
+                <MudSelect T="AppRole" Value="context.Role"
+                           ValueChanged="@(r => SetRoleAsync(context, r))"
+                           Dense="true" Margin="Margin.Dense">
+                    @foreach (var role in Enum.GetValues<AppRole>())
+                    {
+                        <MudSelectItem T="AppRole" Value="role">@role</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudTd>
+            <MudTd>@(context.EmployeeMapping?.DisplayName ?? context.EmployeeMapping?.AtlassianAccountId ?? "—")</MudTd>
+            <MudTd Style="min-width:220px">
+                @if (context.Role == AppRole.Manager)
+                {
+                    <MudSelect T="int" MultiSelection="true"
+                               SelectedValues="@GetSelectedProjectIds(context)"
+                               SelectedValuesChanged="@(ids => SetProjectsAsync(context, ids))"
+                               Dense="true" Margin="Margin.Dense"
+                               Text="@GetProjectsLabel(context)">
+                        @foreach (var p in _allProjects)
+                        {
+                            <MudSelectItem T="int" Value="p.Id">@p.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">N/A</MudText>
+                }
+            </MudTd>
+            <MudTd>@context.LastLoginAt.ToLocalTime().ToString("g")</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private List<AppUser> _users = [];
+    private List<TimelogProjectSummary> _allProjects = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _allProjects = (await TimelogDataService.GetProjectsAsync()).ToList();
+        _users = (await UserService.GetAllAsync()).ToList();
+        _loading = false;
+    }
+
+    private async Task SetRoleAsync(AppUser user, AppRole newRole)
+    {
+        if (user.Role == newRole) return;
+        user.Role = newRole;
+        await UserService.SetRoleAsync(user.Id, newRole);
+        Snackbar.Add($"{user.DisplayName} is now {newRole}", Severity.Success);
+    }
+
+    private async Task SetProjectsAsync(AppUser user, IEnumerable<int> selectedIds)
+    {
+        var ids = selectedIds.ToList();
+        await UserService.SetProjectsAsync(user.Id, ids);
+        // Refresh assigned projects on the in-memory object
+        var refreshed = await UserService.GetAllAsync();
+        var updated = refreshed.FirstOrDefault(u => u.Id == user.Id);
+        if (updated is not null)
+        {
+            var idx = _users.FindIndex(u => u.Id == user.Id);
+            if (idx >= 0) _users[idx] = updated;
+        }
+        Snackbar.Add("Projects updated", Severity.Success);
+    }
+
+    private IEnumerable<int> GetSelectedProjectIds(AppUser user) =>
+        user.AssignedProjects.Select(p => p.TimelogProjectId);
+
+    private string GetProjectsLabel(AppUser user)
+    {
+        var count = user.AssignedProjects.Count;
+        return count == 0 ? "None" : $"{count} project{(count == 1 ? "" : "s")}";
+    }
+}
