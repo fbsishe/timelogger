@@ -81,6 +81,6 @@ public class EntryService(AppDbContext db) : IEntryService
             : e.UserEmail;
         return new(e.Id, e.ExternalId, e.ImportSource != null ? e.ImportSource.Name : "Unknown",
             e.WorkDate, Math.Round(e.TimeSpentSeconds / 3600.0, 2),
-            e.ProjectKey, e.IssueKey, e.Description, displayUser, e.Status.ToString());
+            e.ProjectKey, e.IssueKey, e.Description, displayUser, e.Status.ToString(), e.MetadataJson);
     }
 }

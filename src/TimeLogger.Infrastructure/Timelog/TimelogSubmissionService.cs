@@ -31,9 +31,17 @@ public class TimelogSubmissionService(
         var employeeMapping = await db.EmployeeMappings
             .FirstOrDefaultAsync(m => m.AtlassianAccountId == entry.UserEmail, cancellationToken);
 
+        if (task.ApiTaskId is null)
+        {
+            logger.LogError(
+                "TimelogTask {TaskId} has no ApiTaskId — re-sync Timelog data and retry (entry {EntryId})",
+                task.Id, entry.Id);
+            return;
+        }
+
         var model = new CreateTimeRegistrationDto
         {
-            TaskId = int.Parse(task.ExternalId),
+            TaskId = task.ApiTaskId.Value,
             Date = entry.WorkDate.ToString("yyyy-MM-dd"),
             Hours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2),
             Comment = entry.Description,

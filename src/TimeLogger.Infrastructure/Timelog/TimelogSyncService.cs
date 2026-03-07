@@ -100,6 +100,7 @@ public class TimelogSyncService(
                 task = new TimelogTask
                 {
                     ExternalId = externalId,
+                    ApiTaskId = dto.TaskId,
                     Name = dto.Name,
                     IsActive = dto.IsActive,
                     LastSyncedAt = syncedAt,
@@ -109,6 +110,7 @@ public class TimelogSyncService(
             }
             else
             {
+                task.ApiTaskId = dto.TaskId;
                 task.Name = dto.Name;
                 task.IsActive = dto.IsActive;
                 task.LastSyncedAt = syncedAt;

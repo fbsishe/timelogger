@@ -1,5 +1,7 @@
 @page "/entries"
 @rendermode InteractiveServer
+@using System.Text.Json
+@using System.Text.Json.Nodes
 @inject IEntryService EntryService
 @inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
@@ -69,6 +71,9 @@ else
                         Ignore
                     </MudButton>
                 }
+                <MudIconButton Icon="@Icons.Material.Outlined.DataObject" Size="Size.Small"
+                               Color="Color.Default" Title="View all fields as JSON"
+                               OnClick="@(() => OpenJsonDialog(context))" />
             </MudTd>
         </RowTemplate>
         <PagerContent>
@@ -76,6 +81,17 @@ else
         </PagerContent>
     </MudTable>
 }
+
+@* JSON fields dialog *@
+<MudDialog @bind-Visible="_jsonDialogOpen" Options="@(new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true })">
+    <TitleContent>Entry Fields</TitleContent>
+    <DialogContent>
+        <pre style="font-size:12px;line-height:1.5;overflow:auto;max-height:60vh;white-space:pre;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px">@_jsonDialogContent</pre>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _jsonDialogOpen = false)">Close</MudButton>
+    </DialogActions>
+</MudDialog>
 
 @* Quick-map dialog *@
 <MudDialog @bind-Visible="_mapDialogOpen">
@@ -126,6 +142,8 @@ else
     private List<TimelogTaskSummary> _tasks = [];
     private bool _mapDialogOpen;
     private EntryListItem? _mapTarget;
+    private bool _jsonDialogOpen;
+    private string _jsonDialogContent = string.Empty;
     private int? _selectedProjectId;
     private int? _selectedTaskId;
 
@@ -174,6 +192,32 @@ else
         await EntryService.IgnoreAsync(id);
         Snackbar.Add("Entry ignored.", Severity.Info);
         await LoadAsync();
+    }
+
+    private void OpenJsonDialog(EntryListItem entry)
+    {
+        var obj = new JsonObject
+        {
+            ["id"]          = entry.Id,
+            ["externalId"]  = entry.ExternalId,
+            ["sourceName"]  = entry.SourceName,
+            ["workDate"]    = entry.WorkDate.ToString("yyyy-MM-dd"),
+            ["hours"]       = entry.Hours,
+            ["projectKey"]  = entry.ProjectKey,
+            ["issueKey"]    = entry.IssueKey,
+            ["description"] = entry.Description,
+            ["userEmail"]   = entry.UserEmail,
+            ["status"]      = entry.Status,
+        };
+
+        if (entry.MetadataJson is not null)
+        {
+            try   { obj["metadata"] = JsonNode.Parse(entry.MetadataJson); }
+            catch { obj["metadata"] = entry.MetadataJson; }
+        }
+
+        _jsonDialogContent = JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true });
+        _jsonDialogOpen = true;
     }
 
     private static Color StatusColor(string status) => status switch

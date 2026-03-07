@@ -4,8 +4,11 @@ public class TimelogTask
 {
     public int Id { get; set; }
 
-    /// <summary>ID as returned by the Timelog API.</summary>
+    /// <summary>GUID ID as returned by the Timelog API (used for deduplication).</summary>
     public required string ExternalId { get; set; }
+
+    /// <summary>Integer TaskID as returned by the Timelog API (required when posting time registrations).</summary>
+    public int? ApiTaskId { get; set; }
 
     public required string Name { get; set; }
     public string? Description { get; set; }

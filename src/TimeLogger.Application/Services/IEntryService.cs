@@ -12,7 +12,8 @@ public record EntryListItem(
     string? IssueKey,
     string? Description,
     string? UserEmail,
-    string Status);
+    string Status,
+    string? MetadataJson);
 
 public interface IEntryService
 {

@@ -121,7 +121,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
                 e.Id, e.ExternalId,
                 e.ImportSource != null ? e.ImportSource.Name : "Unknown",
                 e.WorkDate, Math.Round(e.TimeSpentSeconds / 3600.0, 2),
-                e.ProjectKey, e.IssueKey, e.Description, e.UserEmail, e.Status.ToString()))
+                e.ProjectKey, e.IssueKey, e.Description, e.UserEmail, e.Status.ToString(), e.MetadataJson))
             .ToList();
     }
 }
