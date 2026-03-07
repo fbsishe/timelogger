@@ -7,6 +7,8 @@ using Microsoft.Identity.Web;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Events;
+using TimeLogger.Domain;
+using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure;
 using TimeLogger.Infrastructure.Persistence;
 using TimeLogger.Web.Auth;
@@ -72,11 +74,34 @@ try
 
     var app = builder.Build();
 
-    // Create DB and apply all pending migrations on startup
+    // Create DB, apply migrations, and seed default admin
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
+
+        const string adminEmail = "aleksandr.volkov@relyits.se";
+        if (!await db.AppUsers.AnyAsync(u => u.Email == adminEmail))
+        {
+            db.AppUsers.Add(new AppUser
+            {
+                EntraObjectId = "seed-pending",
+                Email = adminEmail,
+                DisplayName = "Aleksandr Volkov",
+                Role = AppRole.Admin,
+            });
+            await db.SaveChangesAsync();
+        }
+        else
+        {
+            // Ensure role is Admin even if the record already exists
+            var existing = await db.AppUsers.FirstAsync(u => u.Email == adminEmail);
+            if (existing.Role != AppRole.Admin)
+            {
+                existing.Role = AppRole.Admin;
+                await db.SaveChangesAsync();
+            }
+        }
     }
 
     if (!app.Environment.IsDevelopment())

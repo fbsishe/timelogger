@@ -22,6 +22,21 @@ public class AppUserService(
 
         if (user is null)
         {
+            // Fall back to email lookup — handles seeded users whose OID isn't set yet
+            var byEmail = await db.AppUsers
+                .Include(u => u.EmployeeMapping)
+                .Include(u => u.AssignedProjects)
+                .FirstOrDefaultAsync(u => u.Email == email, ct);
+
+            if (byEmail is not null)
+            {
+                byEmail.EntraObjectId = oid;
+                byEmail.DisplayName = displayName;
+                byEmail.LastLoginAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
+                return byEmail;
+            }
+
             user = new AppUser
             {
                 EntraObjectId = oid,
