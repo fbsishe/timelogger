@@ -39,12 +39,20 @@ public class TimelogSubmissionService(
             return;
         }
 
+        var comment = entry.Description;
+        if (entry.MappingRuleId.HasValue)
+        {
+            var rule = await db.MappingRules.FindAsync([entry.MappingRuleId.Value], cancellationToken);
+            if (rule?.IncludeIssueKeyInComment == true && !string.IsNullOrWhiteSpace(entry.IssueKey))
+                comment = $"{entry.IssueKey} - {comment}";
+        }
+
         var model = new CreateTimeRegistrationDto
         {
             TaskId = task.ApiTaskId.Value,
             Date = entry.WorkDate.ToString("yyyy-MM-dd"),
             Hours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2),
-            Comment = entry.Description,
+            Comment = comment,
             Billable = false,
             UserId = employeeMapping?.TimelogUserId,
         };

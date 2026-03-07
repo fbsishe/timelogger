@@ -15,7 +15,8 @@ public record MappingRuleDto(
     int? TimelogTaskId,
     string? TimelogTaskName,
     int Priority,
-    bool IsEnabled);
+    bool IsEnabled,
+    bool IncludeIssueKeyInComment);
 
 public record CreateMappingRuleRequest(
     string Name,
@@ -23,7 +24,8 @@ public record CreateMappingRuleRequest(
     IReadOnlyList<MappingRuleConditionDto> Conditions,
     int TimelogProjectId,
     int? TimelogTaskId,
-    int Priority);
+    int Priority,
+    bool IncludeIssueKeyInComment);
 
 public interface IMappingRuleService
 {

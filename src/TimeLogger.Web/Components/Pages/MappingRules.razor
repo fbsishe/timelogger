@@ -64,6 +64,12 @@ else
                 {
                     <MudText Inline="true" Typo="Typo.caption"> / @context.TimelogTaskName</MudText>
                 }
+                @if (context.IncludeIssueKeyInComment)
+                {
+                    <MudTooltip Text="Issue key prepended to comment">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Class="ml-1">#key</MudChip>
+                    </MudTooltip>
+                }
             </MudTd>
             <MudTd>
                 <MudSwitch T="bool" Value="@context.IsEnabled"
@@ -190,6 +196,9 @@ else
             }
         </MudSelect>
         <MudNumericField @bind-Value="_form.Priority" Label="Priority" Min="1" Class="mb-3" />
+        <MudCheckBox @bind-Value="_form.IncludeIssueKeyInComment" Label="Include issue key in comment"
+                     Color="Color.Primary"
+                     Hint='Prepends the source issue key to the Timelog comment, e.g. "AHS-1050 - worked on X"' />
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="@(() => _dialogOpen = false)">Cancel</MudButton>
@@ -244,6 +253,7 @@ else
             TimelogProjectId = rule.TimelogProjectId,
             TimelogTaskId = rule.TimelogTaskId,
             Priority = rule.Priority,
+            IncludeIssueKeyInComment = rule.IncludeIssueKeyInComment,
         };
         _tasks = [];
         _dialogOpen = true;
@@ -266,7 +276,8 @@ else
                 .AsReadOnly(),
             _form.TimelogProjectId,
             _form.TimelogTaskId,
-            _form.Priority);
+            _form.Priority,
+            _form.IncludeIssueKeyInComment);
 
         if (_editingId.HasValue)
             await MappingRuleService.UpdateAsync(_editingId.Value, req);
@@ -332,6 +343,7 @@ else
         public int TimelogProjectId { get; set; }
         public int? TimelogTaskId { get; set; }
         public int Priority { get; set; } = 1;
+        public bool IncludeIssueKeyInComment { get; set; }
     }
 
     private class ConditionFormModel

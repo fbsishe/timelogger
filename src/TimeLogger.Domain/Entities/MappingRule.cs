@@ -21,6 +21,9 @@ public class MappingRule
     public int Priority { get; set; }
 
     public bool IsEnabled { get; set; } = true;
+
+    /// <summary>When true, the entry's issue key is prepended to the Timelog comment, e.g. "AHS-1050 - worked on X".</summary>
+    public bool IncludeIssueKeyInComment { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<ImportedEntry> MatchedEntries { get; set; } = [];

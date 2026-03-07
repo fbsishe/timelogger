@@ -23,7 +23,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
             r.Conditions.Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue)).ToList().AsReadOnly(),
             r.TimelogProjectId, r.TimelogProject.Name,
             r.TimelogTaskId, r.TimelogTask?.Name,
-            r.Priority, r.IsEnabled))
+            r.Priority, r.IsEnabled, r.IncludeIssueKeyInComment))
             .ToList()
             .AsReadOnly();
     }
@@ -38,6 +38,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
             TimelogTaskId = req.TimelogTaskId,
             Priority = req.Priority,
             IsEnabled = true,
+            IncludeIssueKeyInComment = req.IncludeIssueKeyInComment,
             Conditions = req.Conditions.Select(c => new MappingRuleCondition
             {
                 MatchField = c.MatchField,
@@ -62,6 +63,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         rule.TimelogProjectId = req.TimelogProjectId;
         rule.TimelogTaskId = req.TimelogTaskId;
         rule.Priority = req.Priority;
+        rule.IncludeIssueKeyInComment = req.IncludeIssueKeyInComment;
 
         db.MappingRuleConditions.RemoveRange(rule.Conditions);
         rule.Conditions = req.Conditions.Select(c => new MappingRuleCondition
