@@ -29,3 +29,5 @@ public enum MatchOperator
     StartsWith = 3,
     Regex = 4,
 }
+
+public enum AppRole { User = 0, Manager = 1, Admin = 2 }

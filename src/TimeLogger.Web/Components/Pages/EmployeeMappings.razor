@@ -1,5 +1,6 @@
 @page "/employee-mappings"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "ManagerPlus")]
 @inject IEmployeeMappingService EmployeeMappingService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService

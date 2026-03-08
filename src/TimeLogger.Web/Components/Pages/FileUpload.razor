@@ -1,5 +1,6 @@
 @page "/upload"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "ManagerPlus")]
 @inject IFileImportService FileImportService
 @inject IImportSourceService ImportSourceService
 @inject NavigationManager Nav

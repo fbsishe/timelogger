@@ -1,5 +1,6 @@
 @page "/submission"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "AnyUser")]
 @inject ISubmissionService SubmissionService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService

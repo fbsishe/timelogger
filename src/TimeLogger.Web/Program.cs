@@ -1,11 +1,17 @@
 using Hangfire;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Identity.Web;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Events;
+using TimeLogger.Domain;
+using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure;
 using TimeLogger.Infrastructure.Persistence;
+using TimeLogger.Web.Auth;
 using TimeLogger.Web.Components;
 
 // Bootstrap logger: captures failures before full DI is set up
@@ -45,13 +51,57 @@ try
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
 
+    // Authentication
+    if (builder.Environment.IsDevelopment())
+    {
+        builder.Services.AddAuthentication(DevBypassAuthHandler.SchemeName)
+            .AddScheme<AuthenticationSchemeOptions, DevBypassAuthHandler>(DevBypassAuthHandler.SchemeName, null);
+    }
+    else
+    {
+        builder.Services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+            .AddMicrosoftIdentityWebApp(builder.Configuration.GetSection("AzureAd"));
+        builder.Services.AddRazorPages(); // required for Microsoft Identity UI callback pages
+    }
+
+    builder.Services.AddCascadingAuthenticationState();
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("AdminOnly",   p => p.RequireRole("Admin"));
+        options.AddPolicy("ManagerPlus", p => p.RequireRole("Admin", "Manager"));
+        options.AddPolicy("AnyUser",     p => p.RequireAuthenticatedUser());
+    });
+
     var app = builder.Build();
 
-    // Create DB and apply all pending migrations on startup
+    // Create DB, apply migrations, and seed default admin
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
+
+        const string adminEmail = "aleksandr.volkov@relyits.se";
+        if (!await db.AppUsers.AnyAsync(u => u.Email == adminEmail))
+        {
+            db.AppUsers.Add(new AppUser
+            {
+                EntraObjectId = "seed-pending",
+                Email = adminEmail,
+                DisplayName = "Aleksandr Volkov",
+                Role = AppRole.Admin,
+            });
+            await db.SaveChangesAsync();
+        }
+        else
+        {
+            // Ensure role is Admin even if the record already exists
+            var existing = await db.AppUsers.FirstAsync(u => u.Email == adminEmail);
+            if (existing.Role != AppRole.Admin)
+            {
+                existing.Role = AppRole.Admin;
+                await db.SaveChangesAsync();
+            }
+        }
     }
 
     if (!app.Environment.IsDevelopment())
@@ -63,7 +113,16 @@ try
     app.UseHttpsRedirection();
     app.UseAntiforgery();
 
-    app.UseHangfireDashboard("/hangfire");
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    if (!app.Environment.IsDevelopment())
+        app.MapRazorPages(); // Microsoft Identity login/logout endpoints
+
+    app.UseHangfireDashboard("/hangfire", new DashboardOptions
+    {
+        Authorization = [new HangfireAdminAuthFilter()]
+    });
     app.MapHealthChecks("/health");
 
     app.MapStaticAssets();

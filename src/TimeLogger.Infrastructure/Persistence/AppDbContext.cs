@@ -13,6 +13,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<TimelogTask> TimelogTasks => Set<TimelogTask>();
     public DbSet<SubmittedEntry> SubmittedEntries => Set<SubmittedEntry>();
     public DbSet<EmployeeMapping> EmployeeMappings => Set<EmployeeMapping>();
+    public DbSet<AppUser> AppUsers => Set<AppUser>();
+    public DbSet<AppUserProject> AppUserProjects => Set<AppUserProject>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

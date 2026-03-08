@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthStateProvider
 @implements IAsyncDisposable
 
 <MudThemeProvider />
@@ -20,6 +21,17 @@
                                Href="/entries" />
             </MudBadge>
         }
+        @if (_currentUser is not null)
+        {
+            <MudText Typo="Typo.body2" Class="ml-2 mr-1">@_currentUser.DisplayName</MudText>
+            <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Class="mr-2">@_currentUser.Role</MudChip>
+        }
+        <AuthorizeView>
+            <Authorized>
+                <MudIconButton Icon="@Icons.Material.Filled.Logout" Color="Color.Inherit"
+                               Href="/MicrosoftIdentity/Account/SignOut" title="Sign out" />
+            </Authorized>
+        </AuthorizeView>
     </MudAppBar>
 
     <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
@@ -27,12 +39,14 @@
             <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
                 Dashboard
             </MudNavLink>
-            <MudNavLink Href="/mapping-rules" Icon="@Icons.Material.Filled.Rule">
-                Mapping Rules
-            </MudNavLink>
-            <MudNavLink Href="/employee-mappings" Icon="@Icons.Material.Filled.PeopleAlt">
-                Employee Mappings
-            </MudNavLink>
+            <AuthorizeView Policy="ManagerPlus">
+                <MudNavLink Href="/mapping-rules" Icon="@Icons.Material.Filled.Rule">
+                    Mapping Rules
+                </MudNavLink>
+                <MudNavLink Href="/employee-mappings" Icon="@Icons.Material.Filled.PeopleAlt">
+                    Employee Mappings
+                </MudNavLink>
+            </AuthorizeView>
             <MudNavLink Href="/entries" Icon="@Icons.Material.Filled.List">
                 Entries
                 @if (_unmappedCount > 0)
@@ -40,24 +54,36 @@
                     <MudBadge Content="@_unmappedCount" Color="Color.Error" Class="ml-2" />
                 }
             </MudNavLink>
-            <MudNavLink Href="/import-history" Icon="@Icons.Material.Filled.History">
-                Import History
-            </MudNavLink>
-            <MudNavLink Href="/sources" Icon="@Icons.Material.Filled.Source">
-                Import Sources
-            </MudNavLink>
-            <MudNavLink Href="/upload" Icon="@Icons.Material.Filled.UploadFile">
-                File Upload
-            </MudNavLink>
-            <MudNavLink Href="/timelog-sync" Icon="@Icons.Material.Filled.Sync">
-                Timelog Sync
-            </MudNavLink>
+            <AuthorizeView Policy="ManagerPlus">
+                <MudNavLink Href="/import-history" Icon="@Icons.Material.Filled.History">
+                    Import History
+                </MudNavLink>
+                <MudNavLink Href="/upload" Icon="@Icons.Material.Filled.UploadFile">
+                    File Upload
+                </MudNavLink>
+            </AuthorizeView>
+            <AuthorizeView Policy="AdminOnly">
+                <MudNavLink Href="/sources" Icon="@Icons.Material.Filled.Source">
+                    Import Sources
+                </MudNavLink>
+                <MudNavLink Href="/timelog-sync" Icon="@Icons.Material.Filled.Sync">
+                    Timelog Sync
+                </MudNavLink>
+            </AuthorizeView>
             <MudNavLink Href="/submission" Icon="@Icons.Material.Filled.Send">
                 Submission
             </MudNavLink>
-            <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">
-                Settings
-            </MudNavLink>
+            <AuthorizeView Policy="AdminOnly">
+                <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">
+                    Settings
+                </MudNavLink>
+                <MudNavLink Href="/users" Icon="@Icons.Material.Filled.ManageAccounts">
+                    User Management
+                </MudNavLink>
+                <MudNavLink Href="/hangfire" Icon="@Icons.Material.Filled.Schedule">
+                    Hangfire
+                </MudNavLink>
+            </AuthorizeView>
         </MudNavMenu>
     </MudDrawer>
 
@@ -71,12 +97,30 @@
 @code {
     private bool _drawerOpen = true;
     private int _unmappedCount;
+    private AppUser? _currentUser;
     private readonly CancellationTokenSource _cts = new();
 
     protected override async Task OnInitializedAsync()
     {
+        await EnsureCurrentUserAsync();
         await RefreshBadgeAsync();
         _ = RunPeriodicRefreshAsync(_cts.Token);
+    }
+
+    private async Task EnsureCurrentUserAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated != true) return;
+
+        var oid = authState.User.FindFirst("oid")?.Value ?? "";
+        var email = authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
+        var name = authState.User.Identity.Name ?? "";
+
+        if (string.IsNullOrEmpty(oid)) return;
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var userSvc = scope.ServiceProvider.GetRequiredService<IAppUserService>();
+        _currentUser = await userSvc.EnsureUserAsync(oid, email, name);
     }
 
     private async Task RunPeriodicRefreshAsync(CancellationToken ct)

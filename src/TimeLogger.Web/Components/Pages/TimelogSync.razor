@@ -1,5 +1,6 @@
 @page "/timelog-sync"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "AdminOnly")]
 @inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
 

@@ -1,5 +1,6 @@
 @page "/sources"
 @rendermode InteractiveServer
+@attribute [Authorize(Policy = "AdminOnly")]
 @inject IImportSourceService ImportSourceService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService

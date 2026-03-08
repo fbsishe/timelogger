@@ -2,7 +2,21 @@
     <Found Context="routeData">
         <ErrorBoundary>
             <ChildContent>
-                <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+                <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+                    <NotAuthorized>
+                        @if (!context.User.Identity!.IsAuthenticated)
+                        {
+                            <RedirectToLogin />
+                        }
+                        else
+                        {
+                            <AccessDenied />
+                        }
+                    </NotAuthorized>
+                    <Authorizing>
+                        <MudProgressLinear Indeterminate="true" />
+                    </Authorizing>
+                </AuthorizeRouteView>
                 <FocusOnNavigate RouteData="routeData" Selector="h1" />
             </ChildContent>
             <ErrorContent Context="ex">
