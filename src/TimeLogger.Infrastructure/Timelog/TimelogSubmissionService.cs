@@ -47,8 +47,17 @@ public class TimelogSubmissionService(
                 comment = $"{entry.IssueKey} - {comment}";
         }
 
+        var existingSubmission = await db.SubmittedEntries
+            .FirstOrDefaultAsync(s => s.ImportedEntryId == entry.Id, cancellationToken);
+
+        // Reuse the same client-side GUID across retries so Timelog can deduplicate.
+        var clientId = existingSubmission?.ExternalId is { } stored
+            ? Guid.Parse(stored)
+            : Guid.NewGuid();
+
         var model = new CreateTimeRegistrationDto
         {
+            Id = clientId,
             TaskId = task.ApiTaskId.Value,
             Date = entry.WorkDate.ToString("yyyy-MM-dd"),
             Hours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2),
@@ -56,9 +65,6 @@ public class TimelogSubmissionService(
             Billable = false,
             UserId = employeeMapping?.TimelogUserId,
         };
-
-        var existingSubmission = await db.SubmittedEntries
-            .FirstOrDefaultAsync(s => s.ImportedEntryId == entry.Id, cancellationToken);
 
         var attemptCount = (existingSubmission?.AttemptCount ?? 0) + 1;
 
@@ -68,8 +74,8 @@ public class TimelogSubmissionService(
 
             if (response.IsSuccessStatusCode)
             {
-                logger.LogInformation("Submitted entry {EntryId} to Timelog (task {TaskExternalId})",
-                    entry.Id, task.ExternalId);
+                logger.LogInformation("Submitted entry {EntryId} to Timelog (task {TaskExternalId}, clientId {ClientId})",
+                    entry.Id, task.ExternalId, clientId);
 
                 entry.Status = ImportStatus.Submitted;
 
@@ -78,6 +84,7 @@ public class TimelogSubmissionService(
                     db.SubmittedEntries.Add(new SubmittedEntry
                     {
                         ImportedEntryId = entry.Id,
+                        ExternalId = clientId.ToString(),
                         Status = SubmissionStatus.Success,
                         SubmittedAt = DateTimeOffset.UtcNow,
                         AttemptCount = attemptCount,
@@ -85,6 +92,7 @@ public class TimelogSubmissionService(
                 }
                 else
                 {
+                    existingSubmission.ExternalId = clientId.ToString();
                     existingSubmission.Status = SubmissionStatus.Success;
                     existingSubmission.SubmittedAt = DateTimeOffset.UtcNow;
                     existingSubmission.AttemptCount = attemptCount;

@@ -33,7 +33,7 @@ public class TimelogSubmissionServiceTests : IDisposable
         _db.TimelogProjects.Add(project);
         await _db.SaveChangesAsync();
 
-        var task = new TimelogTask { ExternalId = "999", Name = "Dev Task", TimelogProjectId = project.Id, LastSyncedAt = DateTimeOffset.UtcNow };
+        var task = new TimelogTask { ExternalId = "guid-999", ApiTaskId = 999, Name = "Dev Task", TimelogProjectId = project.Id, LastSyncedAt = DateTimeOffset.UtcNow };
         _db.TimelogTasks.Add(task);
         await _db.SaveChangesAsync();
 
@@ -79,6 +79,7 @@ public class TimelogSubmissionServiceTests : IDisposable
         Assert.Equal(entry.Id, audit.ImportedEntryId);
         Assert.Equal(1, audit.AttemptCount);
         Assert.Null(audit.ErrorMessage);
+        Assert.NotNull(audit.ExternalId); // idempotency GUID stored
     }
 
     [Fact]
