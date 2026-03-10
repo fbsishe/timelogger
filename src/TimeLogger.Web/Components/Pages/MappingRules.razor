@@ -18,13 +18,22 @@
 }
 else
 {
+    @if (_staleRuleCount > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-3">
+            @_staleRuleCount mapping rule@(_staleRuleCount == 1 ? "" : "s") point@(_staleRuleCount == 1 ? "s" : "") to an inactive Timelog project and will be skipped during submission.
+            Review the highlighted rule@(_staleRuleCount == 1 ? "" : "s") below.
+        </MudAlert>
+    }
+
     <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mb-3"
                StartIcon="@Icons.Material.Filled.Add"
                OnClick="OpenCreateDialog">
         New Rule
     </MudButton>
 
-    <MudTable Items="_rules" Hover="true" Dense="true" Striped="true" Elevation="1">
+    <MudTable Items="_rules" Hover="true" Dense="true" Striped="true" Elevation="1"
+              RowStyleFunc="@((r, _) => r.IsProjectActive ? "" : "background-color: var(--mud-palette-warning-hover)")">
         <HeaderContent>
             <MudTh>Priority</MudTh>
             <MudTh>Name</MudTh>
@@ -61,6 +70,13 @@ else
             </MudTd>
             <MudTd>
                 @context.TimelogProjectName
+                @if (!context.IsProjectActive)
+                {
+                    <MudTooltip Text="This project is inactive in Timelog — submissions will be skipped">
+                        <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning"
+                                 Size="Size.Small" Class="ml-1" Style="vertical-align:middle" />
+                    </MudTooltip>
+                }
                 @if (context.TimelogTaskName is not null)
                 {
                     <MudText Inline="true" Typo="Typo.caption"> / @context.TimelogTaskName</MudText>
@@ -213,6 +229,7 @@ else
 @code {
     private bool _loading = true;
     private List<MappingRuleDto> _rules = [];
+    private int _staleRuleCount => _rules.Count(r => !r.IsProjectActive);
     private List<TimelogProjectSummary> _projects = [];
     private List<TimelogTaskSummary> _tasks = [];
     private List<EntryListItem>? _testResults;

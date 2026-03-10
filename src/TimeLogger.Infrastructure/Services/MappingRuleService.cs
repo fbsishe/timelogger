@@ -21,7 +21,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         return rules.Select(r => new MappingRuleDto(
             r.Id, r.Name, r.SourceType,
             r.Conditions.Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue)).ToList().AsReadOnly(),
-            r.TimelogProjectId, r.TimelogProject.Name,
+            r.TimelogProjectId, r.TimelogProject.Name, r.TimelogProject.IsActive,
             r.TimelogTaskId, r.TimelogTask?.Name,
             r.Priority, r.IsEnabled, r.IncludeIssueKeyInComment))
             .ToList()

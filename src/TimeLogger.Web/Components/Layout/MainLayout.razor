@@ -40,8 +40,16 @@
                 Dashboard
             </MudNavLink>
             <AuthorizeView Policy="ManagerPlus">
-                <MudNavLink Href="/mapping-rules" Icon="@Icons.Material.Filled.Rule">
+                <MudNavLink Href="/mapping-rules" Icon="@Icons.Material.Filled.Rule"
+                            IconColor="@(_staleRulesCount > 0 ? Color.Warning : Color.Inherit)">
                     Mapping Rules
+                    @if (_staleRulesCount > 0)
+                    {
+                        <MudTooltip Text="@($"{_staleRulesCount} rule{(_staleRulesCount == 1 ? "" : "s")} point to an inactive Timelog project")">
+                            <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning"
+                                     Size="Size.Small" Class="ml-1" Style="vertical-align:middle" />
+                        </MudTooltip>
+                    }
                 </MudNavLink>
                 <MudNavLink Href="/employee-mappings" Icon="@Icons.Material.Filled.PeopleAlt">
                     Employee Mappings
@@ -97,6 +105,7 @@
 @code {
     private bool _drawerOpen = true;
     private int _unmappedCount;
+    private int _staleRulesCount;
     private AppUser? _currentUser;
     private readonly CancellationTokenSource _cts = new();
 
@@ -136,8 +145,11 @@
     private async Task RefreshBadgeAsync()
     {
         await using var scope = ScopeFactory.CreateAsyncScope();
-        var svc = scope.ServiceProvider.GetRequiredService<IEntryService>();
-        _unmappedCount = await svc.GetUnmappedCountAsync();
+        var entrySvc = scope.ServiceProvider.GetRequiredService<IEntryService>();
+        _unmappedCount = await entrySvc.GetUnmappedCountAsync();
+        var ruleSvc = scope.ServiceProvider.GetRequiredService<IMappingRuleService>();
+        var rules = await ruleSvc.GetAllAsync();
+        _staleRulesCount = rules.Count(r => !r.IsProjectActive);
     }
 
     public async ValueTask DisposeAsync()

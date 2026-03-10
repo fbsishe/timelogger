@@ -12,6 +12,7 @@ public record MappingRuleDto(
     IReadOnlyList<MappingRuleConditionDto> Conditions,
     int TimelogProjectId,
     string TimelogProjectName,
+    bool IsProjectActive,
     int? TimelogTaskId,
     string? TimelogTaskName,
     int Priority,

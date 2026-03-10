@@ -35,8 +35,12 @@ else if (_projects.Count == 0)
 }
 else
 {
-    <MudText Typo="Typo.h6" Class="mb-2">@_projects.Count Projects</MudText>
-    <MudTable Items="_projects" Hover="true" Dense="true" Striped="true" Elevation="1"
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h6">@_visibleProjects.Count Projects</MudText>
+        <MudSpacer />
+        <MudCheckBox T="bool" @bind-Value="_showInactive" Label="Show inactive" Dense="true" />
+    </MudStack>
+    <MudTable Items="_visibleProjects" Hover="true" Dense="true" Striped="true" Elevation="1"
               RowsPerPage="50">
         <HeaderContent>
             <MudTh>Name</MudTh>
@@ -100,10 +104,14 @@ else
 @code {
     private bool _loading = true;
     private bool _syncing;
+    private bool _showInactive;
     private DateTimeOffset? _lastSyncedAt;
     private List<TimelogProjectSummary> _projects = [];
     private List<TimelogTaskSummary> _tasks = [];
     private TimelogProjectSummary? _selectedProject;
+
+    private List<TimelogProjectSummary> _visibleProjects =>
+        _showInactive ? _projects : _projects.Where(p => p.IsActive).ToList();
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
