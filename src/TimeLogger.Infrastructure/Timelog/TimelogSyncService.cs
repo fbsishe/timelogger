@@ -93,7 +93,8 @@ public class TimelogSyncService(
         foreach (var dto in taskDtos)
         {
             var externalId = dto.Id ?? dto.TaskId.ToString();
-            var task = existingTasks.FirstOrDefault(t => t.ExternalId == externalId);
+            var task = existingTasks.FirstOrDefault(t => t.ExternalId == externalId)
+                ?? existingTasks.FirstOrDefault(t => t.ApiTaskId == dto.TaskId && dto.TaskId != 0);
 
             if (task is null)
             {
@@ -110,6 +111,7 @@ public class TimelogSyncService(
             }
             else
             {
+                task.ExternalId = externalId;
                 task.ApiTaskId = dto.TaskId;
                 task.Name = dto.Name;
                 task.IsActive = dto.IsActive;
