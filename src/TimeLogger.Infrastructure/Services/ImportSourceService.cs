@@ -9,7 +9,7 @@ using TimeLogger.Infrastructure.Tempo;
 
 namespace TimeLogger.Infrastructure.Services;
 
-public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITempoImportService tempoImport) : IImportSourceService
+public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITempoImportService tempoImport, IApplyMappingsService applyMappings) : IImportSourceService
 {
     public async Task<IReadOnlyList<ImportSourceDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -92,7 +92,12 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
     }
 
     public async Task<int> ImportRangeAsync(int sourceId, DateOnly from, DateOnly to, CancellationToken ct = default)
-        => await tempoImport.ImportAsync(sourceId, from, to, ct);
+    {
+        var imported = await tempoImport.ImportAsync(sourceId, from, to, ct);
+        if (imported > 0)
+            await applyMappings.ApplyAllPendingAsync(ct);
+        return imported;
+    }
 
     public async Task<IReadOnlyList<ImportSourceDto>> GetFileUploadSourcesAsync(CancellationToken ct = default)
     {
