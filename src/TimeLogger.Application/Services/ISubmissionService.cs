@@ -26,6 +26,11 @@ public record ReadyEntryItem(
     string? UserDisplay,
     string? TimelogTaskName);
 
+public record SubmissionBatchResult(int Succeeded, int Failed, int Skipped)
+{
+    public int Total => Succeeded + Failed + Skipped;
+}
+
 public interface ISubmissionService
 {
     Task<int> GetReadyToSubmitCountAsync(CancellationToken ct = default);
@@ -34,6 +39,6 @@ public interface ISubmissionService
     Task<IReadOnlyList<SubmissionHistoryItem>> GetRecentAsync(int limit = 200, CancellationToken ct = default);
     Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(CancellationToken ct = default);
     Task TriggerSubmitAllAsync(CancellationToken ct = default);
-    Task SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default);
+    Task<SubmissionBatchResult> SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default);
     Task SkipAsync(int entryId, CancellationToken ct = default);
 }

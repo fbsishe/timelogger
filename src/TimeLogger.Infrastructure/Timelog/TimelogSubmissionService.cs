@@ -13,19 +13,19 @@ public class TimelogSubmissionService(
     AppDbContext db,
     ILogger<TimelogSubmissionService> logger) : ITimelogSubmissionService
 {
-    public async Task SubmitAsync(ImportedEntry entry, CancellationToken cancellationToken = default)
+    public async Task<SubmitOutcome> SubmitAsync(ImportedEntry entry, CancellationToken cancellationToken = default)
     {
         if (entry.TimelogTaskId is null)
         {
             logger.LogWarning("Entry {EntryId} has no mapped Timelog task — skipping submission", entry.Id);
-            return;
+            return SubmitOutcome.Skipped;
         }
 
         var task = await db.TimelogTasks.FindAsync([entry.TimelogTaskId.Value], cancellationToken);
         if (task is null)
         {
             logger.LogError("TimelogTask {TaskId} not found for entry {EntryId}", entry.TimelogTaskId, entry.Id);
-            return;
+            return SubmitOutcome.Skipped;
         }
 
         var employeeMapping = await db.EmployeeMappings
@@ -36,7 +36,7 @@ public class TimelogSubmissionService(
             logger.LogError(
                 "TimelogTask {TaskId} has no ApiTaskId — re-sync Timelog data and retry (entry {EntryId})",
                 task.Id, entry.Id);
-            return;
+            return SubmitOutcome.Skipped;
         }
 
         var comment = entry.Description;
@@ -68,6 +68,8 @@ public class TimelogSubmissionService(
 
         var attemptCount = (existingSubmission?.AttemptCount ?? 0) + 1;
 
+        SubmitOutcome outcome;
+
         try
         {
             var response = await apiClient.CreateTimeRegistrationAsync(model, cancellationToken);
@@ -78,6 +80,7 @@ public class TimelogSubmissionService(
                     entry.Id, task.ExternalId, clientId);
 
                 entry.Status = ImportStatus.Submitted;
+                outcome = SubmitOutcome.Succeeded;
 
                 if (existingSubmission is null)
                 {
@@ -106,6 +109,7 @@ public class TimelogSubmissionService(
                     entry.Id, response.StatusCode, error);
 
                 entry.Status = ImportStatus.Failed;
+                outcome = SubmitOutcome.Failed;
                 PersistFailure(db, existingSubmission, entry.Id, attemptCount, $"{(int)response.StatusCode}: {error}");
             }
         }
@@ -113,10 +117,12 @@ public class TimelogSubmissionService(
         {
             logger.LogError(ex, "Exception submitting entry {EntryId} to Timelog", entry.Id);
             entry.Status = ImportStatus.Failed;
+            outcome = SubmitOutcome.Failed;
             PersistFailure(db, existingSubmission, entry.Id, attemptCount, ex.Message);
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        return outcome;
     }
 
     public async Task SubmitAllPendingAsync(CancellationToken cancellationToken = default)

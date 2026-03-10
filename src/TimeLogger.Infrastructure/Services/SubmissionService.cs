@@ -114,14 +114,24 @@ public class SubmissionService(
         return Task.CompletedTask;
     }
 
-    public async Task SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default)
+    public async Task<SubmissionBatchResult> SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default)
     {
         var entries = await db.ImportedEntries
             .Where(e => entryIds.Contains(e.Id))
             .ToListAsync(ct);
 
+        int succeeded = 0, failed = 0, skipped = 0;
         foreach (var entry in entries)
-            await submitter.SubmitAsync(entry, ct);
+        {
+            switch (await submitter.SubmitAsync(entry, ct))
+            {
+                case SubmitOutcome.Succeeded: succeeded++; break;
+                case SubmitOutcome.Failed:    failed++;    break;
+                case SubmitOutcome.Skipped:   skipped++;   break;
+            }
+        }
+
+        return new SubmissionBatchResult(succeeded, failed, skipped);
     }
 
     public async Task SkipAsync(int entryId, CancellationToken ct = default)

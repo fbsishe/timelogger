@@ -208,8 +208,17 @@ else
 
         _submitting = true;
         var ids = _selectedEntries.Select(e => e.Id).ToList();
-        await SubmissionService.SubmitSelectedAsync(ids);
-        Snackbar.Add($"Submitted {ids.Count} entr{(ids.Count == 1 ? "y" : "ies")}.", Severity.Success);
+        var result = await SubmissionService.SubmitSelectedAsync(ids);
+
+        if (result.Succeeded > 0 && result.Failed == 0 && result.Skipped == 0)
+            Snackbar.Add($"Submitted {result.Succeeded} entr{(result.Succeeded == 1 ? "y" : "ies")} successfully.", Severity.Success);
+        else if (result.Succeeded == 0 && result.Skipped > 0)
+            Snackbar.Add($"{result.Skipped} entr{(result.Skipped == 1 ? "y was" : "ies were")} skipped — Timelog task not synced yet. Run a Timelog sync and retry.", Severity.Warning);
+        else if (result.Succeeded == 0 && result.Failed > 0)
+            Snackbar.Add($"All {result.Failed} submission{(result.Failed == 1 ? "" : "s")} failed. Check the history table for details.", Severity.Error);
+        else
+            Snackbar.Add($"Submitted {result.Succeeded}, failed {result.Failed}, skipped {result.Skipped}.", result.Failed > 0 ? Severity.Warning : Severity.Success);
+
         _submitting = false;
         await LoadAsync();
     }
