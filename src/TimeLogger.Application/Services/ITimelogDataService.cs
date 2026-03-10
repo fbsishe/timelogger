@@ -18,8 +18,8 @@ public record TimelogTaskSummary(
 
 public interface ITimelogDataService
 {
-    Task<IReadOnlyList<TimelogProjectSummary>> GetProjectsAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<TimelogTaskSummary>> GetTasksByProjectAsync(int projectId, CancellationToken ct = default);
+    Task<IReadOnlyList<TimelogProjectSummary>> GetProjectsAsync(bool activeOnly = true, CancellationToken ct = default);
+    Task<IReadOnlyList<TimelogTaskSummary>> GetTasksByProjectAsync(int projectId, bool activeOnly = true, CancellationToken ct = default);
     Task<DateTimeOffset?> GetLastSyncedAtAsync(CancellationToken ct = default);
     Task TriggerSyncAsync(CancellationToken ct = default);
 }

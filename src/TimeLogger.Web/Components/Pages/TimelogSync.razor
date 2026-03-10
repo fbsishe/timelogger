@@ -112,7 +112,7 @@ else
         _loading = true;
         _selectedProject = null;
         _tasks = [];
-        _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
+        _projects = (await TimelogDataService.GetProjectsAsync(activeOnly: false)).ToList();
         _lastSyncedAt = await TimelogDataService.GetLastSyncedAtAsync();
         _loading = false;
     }
@@ -128,6 +128,6 @@ else
     private async Task ShowTasksAsync(TimelogProjectSummary project)
     {
         _selectedProject = project;
-        _tasks = (await TimelogDataService.GetTasksByProjectAsync(project.Id)).ToList();
+        _tasks = (await TimelogDataService.GetTasksByProjectAsync(project.Id, activeOnly: false)).ToList();
     }
 }

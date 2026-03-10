@@ -27,7 +27,7 @@ public class HomePageTests : BunitContext, IAsyncLifetime
         // Provide default empty returns so LoadAsync never crashes on unmocked calls
         _entryServiceMock.Setup(s => s.GetUnmappedAsync(default)).ReturnsAsync([]);
         _timelogDataServiceMock.Setup(s => s.GetLastSyncedAtAsync(default)).ReturnsAsync((DateTimeOffset?)null);
-        _timelogDataServiceMock.Setup(s => s.GetProjectsAsync(default)).ReturnsAsync([]);
+        _timelogDataServiceMock.Setup(s => s.GetProjectsAsync(It.IsAny<bool>(), default)).ReturnsAsync([]);
         _importSourceServiceMock.Setup(s => s.GetAllAsync(default)).ReturnsAsync([]);
 
         AddAuthorization().SetAuthorized("test@example.com");

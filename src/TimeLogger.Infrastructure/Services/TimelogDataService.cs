@@ -8,8 +8,9 @@ namespace TimeLogger.Infrastructure.Services;
 
 public class TimelogDataService(AppDbContext db, IBackgroundJobClient jobs) : ITimelogDataService
 {
-    public async Task<IReadOnlyList<TimelogProjectSummary>> GetProjectsAsync(CancellationToken ct = default) =>
+    public async Task<IReadOnlyList<TimelogProjectSummary>> GetProjectsAsync(bool activeOnly = true, CancellationToken ct = default) =>
         await db.TimelogProjects
+            .Where(p => !activeOnly || p.IsActive)
             .OrderBy(p => p.Name)
             .Select(p => new TimelogProjectSummary(
                 p.Id, p.ExternalId, p.Name,
@@ -18,9 +19,9 @@ public class TimelogDataService(AppDbContext db, IBackgroundJobClient jobs) : IT
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<TimelogTaskSummary>> GetTasksByProjectAsync(
-        int projectId, CancellationToken ct = default) =>
+        int projectId, bool activeOnly = true, CancellationToken ct = default) =>
         await db.TimelogTasks
-            .Where(t => t.TimelogProjectId == projectId)
+            .Where(t => t.TimelogProjectId == projectId && (!activeOnly || t.IsActive))
             .OrderBy(t => t.Name)
             .Select(t => new TimelogTaskSummary(t.Id, t.ExternalId, t.Name, t.IsActive))
             .ToListAsync(ct);
