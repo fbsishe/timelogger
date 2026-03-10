@@ -31,10 +31,22 @@ public class TimelogSubmissionService(
         var employeeMapping = await db.EmployeeMappings
             .FirstOrDefaultAsync(m => m.AtlassianAccountId == entry.UserEmail, cancellationToken);
 
-        if (task.ApiTaskId is null)
+        int resolvedApiTaskId;
+        if (task.ApiTaskId is not null)
+        {
+            resolvedApiTaskId = task.ApiTaskId.Value;
+        }
+        else if (int.TryParse(task.ExternalId, out var parsedId) && parsedId > 0)
+        {
+            logger.LogWarning(
+                "TimelogTask {TaskId} has no ApiTaskId; using ExternalId {ExternalId} as fallback — run a sync to fix permanently",
+                task.Id, task.ExternalId);
+            resolvedApiTaskId = parsedId;
+        }
+        else
         {
             logger.LogError(
-                "TimelogTask {TaskId} has no ApiTaskId — re-sync Timelog data and retry (entry {EntryId})",
+                "TimelogTask {TaskId} has no ApiTaskId and ExternalId is not numeric — re-sync Timelog data and retry (entry {EntryId})",
                 task.Id, entry.Id);
             return SubmitOutcome.Skipped;
         }
@@ -58,7 +70,7 @@ public class TimelogSubmissionService(
         var model = new CreateTimeRegistrationDto
         {
             Id = clientId,
-            TaskId = task.ApiTaskId.Value,
+            TaskId = resolvedApiTaskId,
             Date = entry.WorkDate.ToString("yyyy-MM-dd"),
             Hours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2),
             Comment = comment,

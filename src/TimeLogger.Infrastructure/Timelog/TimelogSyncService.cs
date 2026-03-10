@@ -65,6 +65,10 @@ public class TimelogSyncService(
         }
 
         await db.SaveChangesAsync(cancellationToken);
+
+        // Backfill ApiTaskId for tasks in old numeric-ID projects that were never populated
+        await BackfillApiTaskIdsAsync(syncedAt, cancellationToken);
+
         logger.LogInformation("Timelog sync complete. {ProjectCount} projects, {StaleCount} marked inactive",
             projectDtos.Count, staleProjects.Count);
     }
@@ -94,7 +98,8 @@ public class TimelogSyncService(
         {
             var externalId = dto.Id ?? dto.TaskId.ToString();
             var task = existingTasks.FirstOrDefault(t => t.ExternalId == externalId)
-                ?? existingTasks.FirstOrDefault(t => t.ApiTaskId == dto.TaskId && dto.TaskId != 0);
+                ?? existingTasks.FirstOrDefault(t => t.ApiTaskId == dto.TaskId && dto.TaskId != 0)
+                ?? existingTasks.FirstOrDefault(t => t.ExternalId == dto.TaskId.ToString());
 
             if (task is null)
             {
@@ -128,6 +133,27 @@ public class TimelogSyncService(
         }
 
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task BackfillApiTaskIdsAsync(DateTimeOffset syncedAt, CancellationToken cancellationToken)
+    {
+        // Find projects with numeric ExternalIds that still have tasks missing ApiTaskId.
+        // Old-style Timelog projects use numeric string IDs (e.g. "177") and their task
+        // API queries use that same integer. This pass is skipped for GUID-style projects
+        // since those should be handled by the main sync loop.
+        var projects = await db.TimelogProjects
+            .Where(p => p.Tasks.Any(t => t.ApiTaskId == null))
+            .ToListAsync(cancellationToken);
+
+        foreach (var project in projects)
+        {
+            if (!int.TryParse(project.ExternalId, out var projectIntId) || projectIntId <= 0)
+                continue;
+
+            logger.LogInformation("Backfilling ApiTaskId for tasks in project {ProjectName} (id {ProjectIntId})",
+                project.Name, projectIntId);
+            await SyncTasksForProjectAsync(project, projectIntId, syncedAt, cancellationToken);
+        }
     }
 
     private async Task<List<Dto.TimelogProjectDto>> FetchAllProjectsAsync(CancellationToken cancellationToken)
