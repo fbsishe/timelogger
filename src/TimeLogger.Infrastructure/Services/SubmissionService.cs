@@ -108,6 +108,52 @@ public class SubmissionService(
         }).ToList();
     }
 
+    public async Task<IReadOnlyList<NeedsTaskItem>> GetNeedsTaskAsync(CancellationToken ct = default)
+    {
+        var entries = await db.ImportedEntries
+            .Where(e => e.Status == ImportStatus.Mapped && e.TimelogTaskId == null)
+            .Include(e => e.ImportSource)
+            .Include(e => e.TimelogProject)
+            .OrderBy(e => e.WorkDate)
+            .ToListAsync(ct);
+
+        var accountIds = entries
+            .Where(e => e.UserEmail != null)
+            .Select(e => e.UserEmail!)
+            .Distinct()
+            .ToList();
+
+        var mappings = accountIds.Count > 0
+            ? await db.EmployeeMappings
+                .Where(m => accountIds.Contains(m.AtlassianAccountId))
+                .ToDictionaryAsync(m => m.AtlassianAccountId, m => m.DisplayName ?? m.TimelogUserDisplayName, ct)
+            : [];
+
+        return entries.Select(e =>
+        {
+            var userDisplay = e.UserEmail != null && mappings.TryGetValue(e.UserEmail, out var name)
+                ? name : e.UserEmail;
+            return new NeedsTaskItem(
+                e.Id,
+                e.WorkDate,
+                e.ImportSource?.Name ?? "Unknown",
+                e.IssueKey,
+                e.Description,
+                Math.Round(e.TimeSpentSeconds / 3600.0, 2),
+                userDisplay,
+                e.TimelogProjectId!.Value,
+                e.TimelogProject?.Name ?? "Unknown");
+        }).ToList();
+    }
+
+    public async Task AssignTaskAsync(int entryId, int taskId, CancellationToken ct = default)
+    {
+        var entry = await db.ImportedEntries.FindAsync([entryId], ct)
+            ?? throw new InvalidOperationException($"Entry {entryId} not found.");
+        entry.TimelogTaskId = taskId;
+        await db.SaveChangesAsync(ct);
+    }
+
     public Task TriggerSubmitAllAsync(CancellationToken ct = default)
     {
         jobs.Enqueue<SubmitMappedEntriesJob>(j => j.ExecuteAsync(CancellationToken.None));

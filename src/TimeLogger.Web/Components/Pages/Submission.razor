@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Policy = "AnyUser")]
 @inject ISubmissionService SubmissionService
+@inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 
@@ -17,7 +18,7 @@ else
 {
     @* Stats row *@
     <MudGrid Spacing="3" Class="mb-4">
-        <MudItem xs="12" sm="4">
+        <MudItem xs="12" sm="3">
             <MudPaper Class="pa-4" Elevation="2">
                 <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Ready to Submit</MudText>
                 <MudText Typo="Typo.h4"
@@ -29,14 +30,26 @@ else
                 </MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="4">
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Needs Task</MudText>
+                <MudText Typo="Typo.h4"
+                         Color="@(_needsTaskEntries.Count > 0 ? Color.Warning : Color.Default)">
+                    @_needsTaskEntries.Count
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Mapped but no Timelog task assigned
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
             <MudPaper Class="pa-4" Elevation="2">
                 <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Submitted</MudText>
                 <MudText Typo="Typo.h4" Color="Color.Success">@_submittedCount</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">Total all-time</MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="4">
+        <MudItem xs="12" sm="3">
             <MudPaper Class="pa-4" Elevation="2">
                 <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Failed</MudText>
                 <MudText Typo="Typo.h4"
@@ -118,13 +131,74 @@ else
             </RowTemplate>
         </MudTable>
     }
-    else if (_submittedCount == 0)
+    else if (_needsTaskEntries.Count == 0 && _submittedCount == 0)
     {
         <MudAlert Severity="Severity.Info">
             No entries are ready for submission yet.
             Map some entries first using the <MudLink Href="/mapping-rules">Mapping Rules</MudLink>
             or the <MudLink Href="/">Dashboard</MudLink>.
         </MudAlert>
+    }
+
+    @* Needs task section *@
+    @if (_needsTaskEntries.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-3">
+            @_needsTaskEntries.Count entr@(_needsTaskEntries.Count == 1 ? "y is" : "ies are") mapped to a Timelog project but
+            have no task assigned. Pick a task for each entry below to make them submittable.
+            You may also want to update the corresponding <MudLink Href="/mapping-rules">Mapping Rules</MudLink>
+            so future entries are mapped correctly.
+        </MudAlert>
+        <MudText Typo="Typo.h6" Class="mb-2">Needs Task Assignment</MudText>
+        <MudTable T="NeedsTaskItem" Items="_needsTaskEntries"
+                  Hover="true" Dense="true" Striped="true" Elevation="1" Class="mb-4">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<NeedsTaskItem, object>(x => x.WorkDate)">Date</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<NeedsTaskItem, object>(x => x.SourceName)">Source</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<NeedsTaskItem, object>(x => x.IssueKey ?? string.Empty)">Issue Key</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<NeedsTaskItem, object>(x => x.Description ?? string.Empty)">Description</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<NeedsTaskItem, object>(x => x.Hours)">Hours</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<NeedsTaskItem, object>(x => x.UserDisplay ?? string.Empty)">Employee</MudTableSortLabel></MudTh>
+                <MudTh>Project</MudTh>
+                <MudTh>Assign Task</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.SourceName</MudTd>
+                <MudTd>@context.IssueKey</MudTd>
+                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.Description
+                </MudTd>
+                <MudTd>@context.Hours</MudTd>
+                <MudTd>@(context.UserDisplay ?? "—")</MudTd>
+                <MudTd>@context.ProjectName</MudTd>
+                <MudTd Style="min-width:220px">
+                    <MudSelect T="int?" Value="_taskChoices.GetValueOrDefault(context.Id)"
+                               ValueChanged="@(v => _taskChoices[context.Id] = v)"
+                               Dense="true" Margin="Margin.Dense"
+                               Placeholder="Select task…"
+                               AnchorOrigin="Origin.BottomLeft">
+                        @foreach (var task in _projectTasks.GetValueOrDefault(context.TimelogProjectId, []))
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)task.Id)">@task.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudTd>
+                <MudTd>
+                    <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Primary"
+                               Disabled="@(!_taskChoices.TryGetValue(context.Id, out var chosen) || chosen == null)"
+                               OnClick="@(() => AssignTaskAsync(context.Id))">
+                        Save
+                    </MudButton>
+                    <MudTooltip Text="Skip — hide this entry without submitting">
+                        <MudIconButton Icon="@Icons.Material.Filled.Block"
+                                       Size="Size.Small" Color="Color.Warning"
+                                       OnClick="@(() => SkipOneAsync(context.Id))" />
+                    </MudTooltip>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
     }
 
     @* Audit trail *@
@@ -179,6 +253,9 @@ else
     private bool _submitting;
     private List<ReadyEntryItem> _readyEntries = [];
     private HashSet<ReadyEntryItem> _selectedEntries = [];
+    private List<NeedsTaskItem> _needsTaskEntries = [];
+    private Dictionary<int, int?> _taskChoices = [];
+    private Dictionary<int, IReadOnlyList<TimelogTaskSummary>> _projectTasks = [];
     private int _submittedCount;
     private int _failedCount;
     private List<SubmissionHistoryItem> _history = [];
@@ -189,11 +266,30 @@ else
     {
         _loading = true;
         _selectedEntries = [];
-        _readyEntries   = (await SubmissionService.GetReadyToSubmitAsync()).ToList();
-        _submittedCount = await SubmissionService.GetSubmittedCountAsync();
-        _failedCount    = await SubmissionService.GetFailedCountAsync();
-        _history        = (await SubmissionService.GetRecentAsync()).ToList();
+        _taskChoices = [];
+        _readyEntries      = (await SubmissionService.GetReadyToSubmitAsync()).ToList();
+        _needsTaskEntries  = (await SubmissionService.GetNeedsTaskAsync()).ToList();
+        _submittedCount    = await SubmissionService.GetSubmittedCountAsync();
+        _failedCount       = await SubmissionService.GetFailedCountAsync();
+        _history           = (await SubmissionService.GetRecentAsync()).ToList();
+
+        // Pre-load tasks for each distinct project that has needs-task entries
+        _projectTasks = [];
+        foreach (var projectId in _needsTaskEntries.Select(e => e.TimelogProjectId).Distinct())
+        {
+            var tasks = await TimelogDataService.GetTasksByProjectAsync(projectId, activeOnly: true);
+            _projectTasks[projectId] = tasks;
+        }
+
         _loading = false;
+    }
+
+    private async Task AssignTaskAsync(int entryId)
+    {
+        if (!_taskChoices.TryGetValue(entryId, out var taskId) || taskId == null) return;
+        await SubmissionService.AssignTaskAsync(entryId, taskId.Value);
+        Snackbar.Add("Task assigned. Entry is now ready to submit.", Severity.Success);
+        await LoadAsync();
     }
 
     private async Task SubmitSelectedAsync()
