@@ -25,10 +25,29 @@ public class SubmissionService(
         await db.SubmittedEntries
             .CountAsync(s => s.Status == SubmissionStatus.Failed, ct);
 
+    public async Task AcknowledgeFailureAsync(int submittedEntryId, CancellationToken ct = default)
+    {
+        var entry = await db.SubmittedEntries.FindAsync([submittedEntryId], ct)
+            ?? throw new InvalidOperationException($"SubmittedEntry {submittedEntryId} not found.");
+        entry.Status = SubmissionStatus.Acknowledged;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task AcknowledgeAllFailuresAsync(CancellationToken ct = default)
+    {
+        var failed = await db.SubmittedEntries
+            .Where(s => s.Status == SubmissionStatus.Failed)
+            .ToListAsync(ct);
+        foreach (var s in failed)
+            s.Status = SubmissionStatus.Acknowledged;
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<IReadOnlyList<SubmissionHistoryItem>> GetRecentAsync(
         int limit = 200, CancellationToken ct = default)
     {
         var items = await db.SubmittedEntries
+            .Where(s => s.Status != SubmissionStatus.Acknowledged)
             .Include(s => s.ImportedEntry)
                 .ThenInclude(e => e.ImportSource)
             .OrderByDescending(s => s.SubmittedAt)

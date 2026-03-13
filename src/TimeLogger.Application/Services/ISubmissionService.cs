@@ -54,4 +54,6 @@ public interface ISubmissionService
     Task TriggerSubmitAllAsync(CancellationToken ct = default);
     Task<SubmissionBatchResult> SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default);
     Task SkipAsync(int entryId, CancellationToken ct = default);
+    Task AcknowledgeFailureAsync(int submittedEntryId, CancellationToken ct = default);
+    Task AcknowledgeAllFailuresAsync(CancellationToken ct = default);
 }

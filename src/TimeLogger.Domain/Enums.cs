@@ -20,6 +20,7 @@ public enum SubmissionStatus
     Success = 1,
     Failed = 2,
     Retrying = 3,
+    Acknowledged = 4,
 }
 
 public enum MatchOperator

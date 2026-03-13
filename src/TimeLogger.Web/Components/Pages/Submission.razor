@@ -86,6 +86,14 @@ else
                    OnClick="LoadAsync">
             Refresh
         </MudButton>
+        @if (_failedCount > 0)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.CheckCircleOutline"
+                       OnClick="AcknowledgeAllAsync">
+                Clear @_failedCount failure@(_failedCount == 1 ? "" : "s")
+            </MudButton>
+        }
         @if (_submitting)
         {
             <MudProgressCircular Size="Size.Small" Indeterminate="true" />
@@ -218,6 +226,7 @@ else
                 <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.Status)">Status</MudTableSortLabel></MudTh>
                 <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.AttemptCount)">Attempts</MudTableSortLabel></MudTh>
                 <MudTh>Error</MudTh>
+                <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
@@ -239,6 +248,16 @@ else
                 <MudTd>@context.AttemptCount</MudTd>
                 <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                     @context.ErrorMessage
+                </MudTd>
+                <MudTd>
+                    @if (context.Status == TimeLogger.Domain.SubmissionStatus.Failed)
+                    {
+                        <MudTooltip Text="Acknowledge — hide this failure from the list">
+                            <MudIconButton Icon="@Icons.Material.Filled.CheckCircleOutline"
+                                           Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => AcknowledgeOneAsync(context.Id))" />
+                        </MudTooltip>
+                    }
                 </MudTd>
             </RowTemplate>
             <PagerContent>
@@ -339,6 +358,19 @@ else
             await SubmissionService.SkipAsync(entry.Id);
 
         Snackbar.Add($"Skipped {_selectedEntries.Count} entr{(_selectedEntries.Count == 1 ? "y" : "ies")}.", Severity.Info);
+        await LoadAsync();
+    }
+
+    private async Task AcknowledgeOneAsync(int submittedEntryId)
+    {
+        await SubmissionService.AcknowledgeFailureAsync(submittedEntryId);
+        await LoadAsync();
+    }
+
+    private async Task AcknowledgeAllAsync()
+    {
+        await SubmissionService.AcknowledgeAllFailuresAsync();
+        Snackbar.Add("All failures acknowledged and hidden.", Severity.Info);
         await LoadAsync();
     }
 
