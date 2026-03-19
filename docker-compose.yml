@@ -23,6 +23,17 @@ services:
       - "8080:8080"
     environment:
       ConnectionStrings__Default: "Server=sqlserver,1433;Database=TimeLogger;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      Timelog__BaseUrl: "${Timelog__BaseUrl}"
+      Timelog__ApiKey: "${Timelog__ApiKey}"
+      Jira__BaseUrl: "${Jira__BaseUrl}"
+      Jira__Email: "${Jira__Email}"
+      Jira__ApiToken: "${Jira__ApiToken}"
+      Tempo__BaseUrl: "${Tempo__BaseUrl}"
+      Tempo__Token: "${Tempo__Token}"
+      Hangfire__DashboardPassword: "${Hangfire__DashboardPassword}"
+      AzureAd__TenantId: "${AzureAd__TenantId}"
+      AzureAd__ClientId: "${AzureAd__ClientId}"
+      AzureAd__ClientSecret: "${AzureAd__ClientSecret}"
     depends_on:
       sqlserver:
         condition: service_healthy
