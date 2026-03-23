@@ -34,6 +34,7 @@ services:
       AzureAd__TenantId: "${AzureAd__TenantId}"
       AzureAd__ClientId: "${AzureAd__ClientId}"
       AzureAd__ClientSecret: "${AzureAd__ClientSecret}"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
     depends_on:
       sqlserver:
         condition: service_healthy
