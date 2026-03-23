@@ -64,6 +64,7 @@ try
         builder.Services.AddRazorPages(); // required for Microsoft Identity UI callback pages
     }
 
+    builder.Services.AddScoped<IClaimsTransformation, AppRoleClaimsTransformation>();
     builder.Services.AddCascadingAuthenticationState();
     builder.Services.AddAuthorization(options =>
     {
