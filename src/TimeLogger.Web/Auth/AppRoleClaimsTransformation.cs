@@ -9,7 +9,8 @@ public class AppRoleClaimsTransformation(IServiceScopeFactory scopeFactory) : IC
 {
     public async Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
     {
-        var oid = principal.FindFirst("oid")?.Value;
+        var oid = principal.FindFirst("oid")?.Value
+            ?? principal.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
         if (string.IsNullOrEmpty(oid))
             return principal;
 

@@ -121,7 +121,9 @@
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         if (authState.User.Identity?.IsAuthenticated != true) return;
 
-        var oid = authState.User.FindFirst("oid")?.Value ?? "";
+        var oid = authState.User.FindFirst("oid")?.Value
+            ?? authState.User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
+            ?? "";
         var email = authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
         var name = authState.User.Identity.Name ?? "";
 
