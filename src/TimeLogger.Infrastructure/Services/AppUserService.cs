@@ -28,7 +28,7 @@ public class AppUserService(
                 .Include(u => u.AssignedProjects)
                 .FirstOrDefaultAsync(u => u.Email == email, ct);
 
-            if (byEmail is not null)
+            if (byEmail is not null && byEmail.EntraObjectId == "seed-pending")
             {
                 byEmail.EntraObjectId = oid;
                 byEmail.DisplayName = displayName;
