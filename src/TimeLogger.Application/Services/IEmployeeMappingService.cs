@@ -6,17 +6,24 @@ public record EmployeeMappingDto(
     string? DisplayName,
     int TimelogUserId,
     string? TimelogUserDisplayName,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool IsExcluded,
+    int? LinkedAppUserId,
+    string? LinkedAppUserDisplayName);
 
 public record KnownAccountIdDto(string AccountId, string? DisplayName);
 
 public record TimelogUserSummaryDto(int UserId, string FullName, string? Email);
 
+public record AppUserSummaryForMappingDto(int Id, string DisplayName, string Email);
+
 public record UpsertEmployeeMappingRequest(
     string AtlassianAccountId,
     string? DisplayName,
     int TimelogUserId,
-    string? TimelogUserDisplayName);
+    string? TimelogUserDisplayName,
+    bool IsExcluded,
+    int? AppUserId);
 
 public interface IEmployeeMappingService
 {
@@ -26,4 +33,5 @@ public interface IEmployeeMappingService
     Task<IReadOnlyList<KnownAccountIdDto>> GetUnmappedAccountIdsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TimelogUserSummaryDto>> GetTimelogUsersAsync(CancellationToken ct = default);
     Task<string?> FetchJiraDisplayNameAsync(string accountId, CancellationToken ct = default);
+    Task<IReadOnlyList<AppUserSummaryForMappingDto>> GetAppUsersAsync(CancellationToken ct = default);
 }

@@ -7,10 +7,15 @@ namespace TimeLogger.Infrastructure.Services;
 
 public class EntryService(AppDbContext db) : IEntryService
 {
-    public async Task<IReadOnlyList<EntryListItem>> GetUnmappedAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<EntryListItem>> GetUnmappedAsync(string? accountIdFilter = null, CancellationToken ct = default)
     {
-        var entries = await db.ImportedEntries
-            .Where(e => e.Status == ImportStatus.Pending || e.Status == ImportStatus.Failed)
+        var query = db.ImportedEntries
+            .Where(e => e.Status == ImportStatus.Pending || e.Status == ImportStatus.Failed);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        var entries = await query
             .Include(e => e.ImportSource)
             .OrderByDescending(e => e.WorkDate)
             .ToListAsync(ct);
@@ -19,9 +24,16 @@ public class EntryService(AppDbContext db) : IEntryService
         return entries.Select(e => ToListItem(e, mappings)).ToList();
     }
 
-    public async Task<int> GetUnmappedCountAsync(CancellationToken ct = default) =>
-        await db.ImportedEntries
-            .CountAsync(e => e.Status == ImportStatus.Pending || e.Status == ImportStatus.Failed, ct);
+    public async Task<int> GetUnmappedCountAsync(string? accountIdFilter = null, CancellationToken ct = default)
+    {
+        var query = db.ImportedEntries
+            .Where(e => e.Status == ImportStatus.Pending || e.Status == ImportStatus.Failed);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        return await query.CountAsync(ct);
+    }
 
     public async Task ManualMapAsync(int entryId, int timelogProjectId, int? timelogTaskId, CancellationToken ct = default)
     {
@@ -43,9 +55,14 @@ public class EntryService(AppDbContext db) : IEntryService
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<IReadOnlyList<EntryListItem>> GetAllAsync(int page, int pageSize, CancellationToken ct = default)
+    public async Task<IReadOnlyList<EntryListItem>> GetAllAsync(int page, int pageSize, string? accountIdFilter = null, CancellationToken ct = default)
     {
-        var entries = await db.ImportedEntries
+        IQueryable<Domain.Entities.ImportedEntry> query = db.ImportedEntries;
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        var entries = await query
             .Include(e => e.ImportSource)
             .OrderByDescending(e => e.ImportedAt)
             .Skip((page - 1) * pageSize)
@@ -56,8 +73,13 @@ public class EntryService(AppDbContext db) : IEntryService
         return entries.Select(e => ToListItem(e, mappings)).ToList();
     }
 
-    public async Task<int> GetTotalCountAsync(CancellationToken ct = default) =>
-        await db.ImportedEntries.CountAsync(ct);
+    public async Task<int> GetTotalCountAsync(string? accountIdFilter = null, CancellationToken ct = default)
+    {
+        if (accountIdFilter != null)
+            return await db.ImportedEntries.CountAsync(e => e.UserEmail == accountIdFilter, ct);
+
+        return await db.ImportedEntries.CountAsync(ct);
+    }
 
     private async Task<Dictionary<string, string>> GetMappingLookupAsync(
         IEnumerable<string?> userEmails, CancellationToken ct)

@@ -26,7 +26,8 @@ else
             <MudTh>Account ID</MudTh>
             <MudTh>Jira Display Name</MudTh>
             <MudTh>Timelog User</MudTh>
-            <MudTh>User ID</MudTh>
+            <MudTh>Linked User</MudTh>
+            <MudTh>Excluded</MudTh>
             <MudTh>Updated</MudTh>
             <MudTh>Actions</MudTh>
         </HeaderContent>
@@ -38,7 +39,13 @@ else
             </MudTd>
             <MudTd>@(context.DisplayName ?? "—")</MudTd>
             <MudTd>@(context.TimelogUserDisplayName ?? "—")</MudTd>
-            <MudTd>@context.TimelogUserId</MudTd>
+            <MudTd>@(context.LinkedAppUserDisplayName ?? "—")</MudTd>
+            <MudTd>
+                @if (context.IsExcluded)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">Excluded</MudChip>
+                }
+            </MudTd>
             <MudTd>@context.UpdatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
@@ -111,7 +118,7 @@ else
 
         <MudSelect T="int" Label="Timelog Employee"
                    Value="_form.TimelogUserId"
-                   ValueChanged="OnTimelogUserChangedAsync"
+                   ValueChanged="OnTimelogUserChanged"
                    Required="true" AnchorOrigin="Origin.BottomLeft" Class="mb-3"
                    Disabled="@(_timelogUsers.Count == 0)"
                    HelperText="@(_timelogUsers.Count == 0 ? "Loading employees..." : null)">
@@ -121,6 +128,23 @@ else
                 <MudSelectItem T="int" Value="@u.UserId">@u.FullName (@u.UserId)</MudSelectItem>
             }
         </MudSelect>
+
+        <MudSelect T="int?" Label="Linked User Account"
+                   Value="_form.AppUserId"
+                   ValueChanged="@((int? v) => _form.AppUserId = v)"
+                   AnchorOrigin="Origin.BottomLeft" Class="mb-3"
+                   Clearable="true"
+                   HelperText="Optional — link to an app user so they can log in and see only their entries">
+            <MudSelectItem T="int?" Value="@((int?)null)">— none —</MudSelectItem>
+            @foreach (var u in _appUsers)
+            {
+                <MudSelectItem T="int?" Value="@((int?)u.Id)">@u.DisplayName (@u.Email)</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudCheckBox @bind-Value="_form.IsExcluded" Color="Color.Warning" Class="mt-1">
+            Exclude from processing — newly imported entries for this employee will be automatically skipped
+        </MudCheckBox>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="@(() => _dialogOpen = false)">Cancel</MudButton>
@@ -137,6 +161,7 @@ else
     private List<EmployeeMappingDto> _mappings = [];
     private List<KnownAccountIdDto> _unmappedAccountIds = [];
     private List<TimelogUserSummaryDto> _timelogUsers = [];
+    private List<AppUserSummaryForMappingDto> _appUsers = [];
 
     private bool _loadingUnmapped;
     private bool _dialogOpen;
@@ -163,10 +188,14 @@ else
         _editingAccountId = null;
         _form = new MappingFormModel();
         _timelogUsers = [];
+        _appUsers = [];
         _unmappedAccountIds = [];
         _loadingUnmapped = true;
         _dialogOpen = true;
-        await Task.WhenAll(LoadTimelogUsersAsync(), LoadUnmappedAccountIdsAsync());
+        StateHasChanged();
+        await LoadTimelogUsersAsync();
+        await LoadAppUsersAsync();
+        await LoadUnmappedAccountIdsAsync();
     }
 
     private async Task LoadUnmappedAccountIdsAsync()
@@ -185,10 +214,15 @@ else
             AtlassianAccountId = mapping.AtlassianAccountId,
             DisplayName = mapping.DisplayName,
             TimelogUserId = mapping.TimelogUserId,
+            IsExcluded = mapping.IsExcluded,
+            AppUserId = mapping.LinkedAppUserId,
         };
         _timelogUsers = [];
+        _appUsers = [];
         _dialogOpen = true;
+        StateHasChanged();
         await LoadTimelogUsersAsync();
+        await LoadAppUsersAsync();
     }
 
     private async Task LoadTimelogUsersAsync()
@@ -197,12 +231,17 @@ else
         StateHasChanged();
     }
 
+    private async Task LoadAppUsersAsync()
+    {
+        _appUsers = (await EmployeeMappingService.GetAppUsersAsync()).ToList();
+        StateHasChanged();
+    }
+
     private async Task OnAccountIdSelectedAsync(string? accountId)
     {
         _form.AtlassianAccountId = accountId ?? "";
         if (string.IsNullOrWhiteSpace(accountId)) return;
 
-        // Use cached display name from the dropdown if available, otherwise fetch from Jira
         var cached = _unmappedAccountIds.FirstOrDefault(x => x.AccountId == accountId);
         if (cached?.DisplayName is not null)
             _form.DisplayName = cached.DisplayName;
@@ -210,7 +249,7 @@ else
             await FetchJiraNameAsync();
     }
 
-    private void OnTimelogUserChangedAsync(int userId)
+    private void OnTimelogUserChanged(int userId)
     {
         _form.TimelogUserId = userId;
         var user = _timelogUsers.FirstOrDefault(u => u.UserId == userId);
@@ -242,7 +281,9 @@ else
             accountId,
             _form.DisplayName,
             _form.TimelogUserId,
-            _form.TimelogUserDisplayName));
+            _form.TimelogUserDisplayName,
+            _form.IsExcluded,
+            _form.AppUserId));
 
         _dialogOpen = false;
         Snackbar.Add("Mapping saved.", Severity.Success);
@@ -268,5 +309,7 @@ else
         public string? DisplayName { get; set; }
         public int TimelogUserId { get; set; }
         public string? TimelogUserDisplayName { get; set; }
+        public bool IsExcluded { get; set; }
+        public int? AppUserId { get; set; }
     }
 }

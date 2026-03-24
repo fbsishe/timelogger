@@ -47,9 +47,9 @@ public interface ISubmissionService
     Task<int> GetReadyToSubmitCountAsync(CancellationToken ct = default);
     Task<int> GetSubmittedCountAsync(CancellationToken ct = default);
     Task<int> GetFailedCountAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<SubmissionHistoryItem>> GetRecentAsync(int limit = 200, CancellationToken ct = default);
-    Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<NeedsTaskItem>> GetNeedsTaskAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<SubmissionHistoryItem>> GetRecentAsync(int limit = 200, string? accountIdFilter = null, CancellationToken ct = default);
+    Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(string? accountIdFilter = null, CancellationToken ct = default);
+    Task<IReadOnlyList<NeedsTaskItem>> GetNeedsTaskAsync(string? accountIdFilter = null, CancellationToken ct = default);
     Task AssignTaskAsync(int entryId, int taskId, CancellationToken ct = default);
     Task TriggerSubmitAllAsync(CancellationToken ct = default);
     Task<SubmissionBatchResult> SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default);

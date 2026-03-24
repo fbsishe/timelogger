@@ -6,6 +6,7 @@
 @inject IEntryService EntryService
 @inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
+@inject IAppUserService AppUserService
 
 <PageTitle>Entries – TimeLogger</PageTitle>
 
@@ -131,7 +132,10 @@ else
 </MudDialog>
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = null!;
+
     private bool _loading = true;
+    private string? _accountIdFilter;
     private List<EntryListItem> _allEntries = [];
     private int _totalCount;
     private string _statusFilter = "All";
@@ -148,15 +152,32 @@ else
     private int? _selectedProjectId;
     private int? _selectedTaskId;
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        _accountIdFilter = await ResolveAccountIdFilterAsync();
+        await LoadAsync();
+    }
 
     protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task<string?> ResolveAccountIdFilterAsync()
+    {
+        var auth = await AuthState;
+        if (!auth.User.IsInRole("User")) return null;
+
+        var oid = auth.User.FindFirst("oid")?.Value
+            ?? auth.User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
+        if (oid is null) return null;
+
+        var appUser = await AppUserService.GetByOidAsync(oid);
+        return appUser?.EmployeeMapping?.AtlassianAccountId;
+    }
 
     private async Task LoadAsync()
     {
         _loading = true;
-        _allEntries = (await EntryService.GetAllAsync(1, 5000)).ToList();
-        _totalCount = await EntryService.GetTotalCountAsync();
+        _allEntries = (await EntryService.GetAllAsync(1, 5000, _accountIdFilter)).ToList();
+        _totalCount = await EntryService.GetTotalCountAsync(_accountIdFilter);
         _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
         _loading = false;
     }

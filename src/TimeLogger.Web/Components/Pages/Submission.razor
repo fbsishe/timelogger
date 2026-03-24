@@ -5,6 +5,7 @@
 @inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject IAppUserService AppUserService
 
 <PageTitle>Submission – TimeLogger</PageTitle>
 
@@ -268,8 +269,11 @@ else
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = null!;
+
     private bool _loading = true;
     private bool _submitting;
+    private string? _accountIdFilter;
     private List<ReadyEntryItem> _readyEntries = [];
     private HashSet<ReadyEntryItem> _selectedEntries = [];
     private List<NeedsTaskItem> _needsTaskEntries = [];
@@ -279,18 +283,35 @@ else
     private int _failedCount;
     private List<SubmissionHistoryItem> _history = [];
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        _accountIdFilter = await ResolveAccountIdFilterAsync();
+        await LoadAsync();
+    }
+
+    private async Task<string?> ResolveAccountIdFilterAsync()
+    {
+        var auth = await AuthState;
+        if (!auth.User.IsInRole("User")) return null;
+
+        var oid = auth.User.FindFirst("oid")?.Value
+            ?? auth.User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
+        if (oid is null) return null;
+
+        var appUser = await AppUserService.GetByOidAsync(oid);
+        return appUser?.EmployeeMapping?.AtlassianAccountId;
+    }
 
     private async Task LoadAsync()
     {
         _loading = true;
         _selectedEntries = [];
         _taskChoices = [];
-        _readyEntries      = (await SubmissionService.GetReadyToSubmitAsync()).ToList();
-        _needsTaskEntries  = (await SubmissionService.GetNeedsTaskAsync()).ToList();
+        _readyEntries      = (await SubmissionService.GetReadyToSubmitAsync(_accountIdFilter)).ToList();
+        _needsTaskEntries  = (await SubmissionService.GetNeedsTaskAsync(_accountIdFilter)).ToList();
         _submittedCount    = await SubmissionService.GetSubmittedCountAsync();
         _failedCount       = await SubmissionService.GetFailedCountAsync();
-        _history           = (await SubmissionService.GetRecentAsync()).ToList();
+        _history           = (await SubmissionService.GetRecentAsync(accountIdFilter: _accountIdFilter)).ToList();
 
         // Pre-load tasks for each distinct project that has needs-task entries
         _projectTasks = [];

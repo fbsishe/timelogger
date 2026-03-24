@@ -17,10 +17,10 @@ public record EntryListItem(
 
 public interface IEntryService
 {
-    Task<IReadOnlyList<EntryListItem>> GetUnmappedAsync(CancellationToken ct = default);
-    Task<int> GetUnmappedCountAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<EntryListItem>> GetUnmappedAsync(string? accountIdFilter = null, CancellationToken ct = default);
+    Task<int> GetUnmappedCountAsync(string? accountIdFilter = null, CancellationToken ct = default);
     Task ManualMapAsync(int entryId, int timelogProjectId, int? timelogTaskId, CancellationToken ct = default);
     Task IgnoreAsync(int entryId, CancellationToken ct = default);
-    Task<IReadOnlyList<EntryListItem>> GetAllAsync(int page, int pageSize, CancellationToken ct = default);
-    Task<int> GetTotalCountAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<EntryListItem>> GetAllAsync(int page, int pageSize, string? accountIdFilter = null, CancellationToken ct = default);
+    Task<int> GetTotalCountAsync(string? accountIdFilter = null, CancellationToken ct = default);
 }

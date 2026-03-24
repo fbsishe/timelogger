@@ -7,6 +7,7 @@ public class EmployeeMapping
     public string? DisplayName { get; set; }
     public int TimelogUserId { get; set; }
     public string? TimelogUserDisplayName { get; set; }
+    public bool IsExcluded { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

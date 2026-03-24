@@ -44,10 +44,15 @@ public class SubmissionService(
     }
 
     public async Task<IReadOnlyList<SubmissionHistoryItem>> GetRecentAsync(
-        int limit = 200, CancellationToken ct = default)
+        int limit = 200, string? accountIdFilter = null, CancellationToken ct = default)
     {
-        var items = await db.SubmittedEntries
-            .Where(s => s.Status != SubmissionStatus.Acknowledged)
+        IQueryable<Domain.Entities.SubmittedEntry> query = db.SubmittedEntries
+            .Where(s => s.Status != SubmissionStatus.Acknowledged);
+
+        if (accountIdFilter != null)
+            query = query.Where(s => s.ImportedEntry.UserEmail == accountIdFilter);
+
+        var items = await query
             .Include(s => s.ImportedEntry)
                 .ThenInclude(e => e.ImportSource)
             .OrderByDescending(s => s.SubmittedAt)
@@ -89,11 +94,16 @@ public class SubmissionService(
         }).ToList();
     }
 
-    public async Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(string? accountIdFilter = null, CancellationToken ct = default)
     {
-        var entries = await db.ImportedEntries
+        var query = db.ImportedEntries
             .Where(e => (e.Status == ImportStatus.Mapped || e.Status == ImportStatus.Failed)
-                        && e.TimelogTaskId != null)
+                        && e.TimelogTaskId != null);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        var entries = await query
             .Include(e => e.ImportSource)
             .Include(e => e.TimelogTask)
             .OrderBy(e => e.WorkDate)
@@ -127,10 +137,15 @@ public class SubmissionService(
         }).ToList();
     }
 
-    public async Task<IReadOnlyList<NeedsTaskItem>> GetNeedsTaskAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<NeedsTaskItem>> GetNeedsTaskAsync(string? accountIdFilter = null, CancellationToken ct = default)
     {
-        var entries = await db.ImportedEntries
-            .Where(e => e.Status == ImportStatus.Mapped && e.TimelogTaskId == null)
+        var query = db.ImportedEntries
+            .Where(e => e.Status == ImportStatus.Mapped && e.TimelogTaskId == null);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        var entries = await query
             .Include(e => e.ImportSource)
             .Include(e => e.TimelogProject)
             .OrderBy(e => e.WorkDate)

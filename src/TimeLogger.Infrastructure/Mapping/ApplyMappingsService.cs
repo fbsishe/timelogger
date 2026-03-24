@@ -15,23 +15,49 @@ public class ApplyMappingsService(
 {
     public async Task<int> ApplyAllPendingAsync(CancellationToken cancellationToken = default)
     {
-        var rules = await LoadRulesAsync(cancellationToken);
-        if (rules.Count == 0)
-        {
-            logger.LogInformation("No enabled mapping rules found — skipping");
-            return 0;
-        }
-
         var entries = await db.ImportedEntries
             .Where(e => e.Status == ImportStatus.Pending)
             .Include(e => e.ImportSource)
             .ToListAsync(cancellationToken);
 
-        logger.LogInformation("Applying mapping rules to {Count} pending entries", entries.Count);
+        if (entries.Count == 0)
+            return 0;
+
+        // Auto-skip entries for excluded employees
+        var excludedAccountIds = await db.EmployeeMappings
+            .Where(m => m.IsExcluded)
+            .Select(m => m.AtlassianAccountId)
+            .ToListAsync(cancellationToken);
+
+        int excluded = 0;
+        if (excludedAccountIds.Count > 0)
+        {
+            foreach (var entry in entries.Where(e => e.UserEmail != null && excludedAccountIds.Contains(e.UserEmail!)))
+            {
+                entry.Status = ImportStatus.Ignored;
+                excluded++;
+            }
+            if (excluded > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                logger.LogInformation("Auto-skipped {Count} entries for excluded employees", excluded);
+            }
+        }
+
+        var pending = entries.Where(e => e.Status == ImportStatus.Pending).ToList();
+
+        var rules = await LoadRulesAsync(cancellationToken);
+        if (rules.Count == 0 || pending.Count == 0)
+        {
+            logger.LogInformation("No enabled mapping rules or no pending entries — skipping rule application");
+            return excluded;
+        }
+
+        logger.LogInformation("Applying mapping rules to {Count} pending entries", pending.Count);
 
         int mapped = 0;
 
-        foreach (var entry in entries)
+        foreach (var entry in pending)
         {
             var result = engine.Evaluate(rules, entry);
 
@@ -48,8 +74,8 @@ public class ApplyMappingsService(
         if (mapped > 0)
             await db.SaveChangesAsync(cancellationToken);
 
-        logger.LogInformation("Mapped {Mapped}/{Total} pending entries", mapped, entries.Count);
-        return mapped;
+        logger.LogInformation("Mapped {Mapped}/{Total} pending entries", mapped, pending.Count);
+        return excluded + mapped;
     }
 
     public async Task<IReadOnlyList<ImportedEntry>> TestRuleAsync(
