@@ -200,5 +200,90 @@ public class ApplyMappingsServiceTests : IDisposable
         Assert.Equal(ImportStatus.Pending, unchanged!.Status);
     }
 
+    // ------------------------------------------------------------------
+    // ApplyRuleAsync
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ApplyRuleAsync_MapsMatchingPendingEntries()
+    {
+        var (source, project, task) = await SeedBaseDataAsync();
+        var rule = await SeedRuleAsync(project.Id, task.Id);
+        var matchEntry = await SeedEntryAsync(source.Id);
+        var noMatchEntry = await SeedEntryAsync(source.Id);
+
+        _engineMock.Setup(e => e.Matches(It.Is<MappingRule>(r => r.Id == rule.Id), matchEntry)).Returns(true);
+        _engineMock.Setup(e => e.Matches(It.Is<MappingRule>(r => r.Id == rule.Id), noMatchEntry)).Returns(false);
+
+        var count = await _sut.ApplyRuleAsync(rule.Id);
+
+        Assert.Equal(1, count);
+        var mapped = await _db.ImportedEntries.FindAsync(matchEntry.Id);
+        Assert.Equal(ImportStatus.Mapped, mapped!.Status);
+        Assert.Equal(project.Id, mapped.TimelogProjectId);
+        Assert.Equal(task.Id, mapped.TimelogTaskId);
+        Assert.Equal(rule.Id, mapped.MappingRuleId);
+        var unchanged = await _db.ImportedEntries.FindAsync(noMatchEntry.Id);
+        Assert.Equal(ImportStatus.Pending, unchanged!.Status);
+    }
+
+    [Fact]
+    public async Task ApplyRuleAsync_ReturnsZeroWhenNoEntriesMatch()
+    {
+        var (source, project, task) = await SeedBaseDataAsync();
+        var rule = await SeedRuleAsync(project.Id, task.Id);
+        await SeedEntryAsync(source.Id);
+
+        _engineMock.Setup(e => e.Matches(It.IsAny<MappingRule>(), It.IsAny<ImportedEntry>())).Returns(false);
+
+        var count = await _sut.ApplyRuleAsync(rule.Id);
+
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task ApplyRuleAsync_ThrowsWhenRuleNotFound()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _sut.ApplyRuleAsync(9999));
+    }
+
+    // ------------------------------------------------------------------
+    // ApplyAllPendingAsync — excluded employees
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ApplyAllPendingAsync_IgnoresExcludedEmployees()
+    {
+        var (source, project, task) = await SeedBaseDataAsync();
+        await SeedRuleAsync(project.Id, task.Id);
+
+        var excludedId = "excluded@example.com";
+        _db.EmployeeMappings.Add(new EmployeeMapping
+        {
+            AtlassianAccountId = excludedId,
+            DisplayName = "Excluded",
+            TimelogUserId = 99,
+            IsExcluded = true,
+        });
+
+        var excludedEntry = new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = Guid.NewGuid().ToString(),
+            UserEmail = excludedId,
+            WorkDate = new DateOnly(2024, 1, 1),
+            TimeSpentSeconds = 3600,
+            Status = ImportStatus.Pending,
+        };
+        _db.ImportedEntries.Add(excludedEntry);
+        await _db.SaveChangesAsync();
+
+        var count = await _sut.ApplyAllPendingAsync();
+
+        var updated = await _db.ImportedEntries.FindAsync(excludedEntry.Id);
+        Assert.Equal(ImportStatus.Ignored, updated!.Status);
+        Assert.Equal(1, count); // excluded count = 1
+    }
+
     public void Dispose() => _db.Dispose();
 }

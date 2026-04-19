@@ -167,5 +167,71 @@ public class MappingRuleServiceTests : IDisposable
         Assert.Empty(results);
     }
 
+    // ------------------------------------------------------------------
+    // MovePriorityAsync
+    // ------------------------------------------------------------------
+
+    private async Task<(MappingRule r1, MappingRule r2, MappingRule r3)> SeedThreeRulesAsync()
+    {
+        var project = new TimelogProject { ExternalId = "proj-move", Name = "Move Project", LastSyncedAt = DateTimeOffset.UtcNow };
+        _db.TimelogProjects.Add(project);
+        await _db.SaveChangesAsync();
+
+        var r1 = new MappingRule { Name = "R1", Priority = 10, TimelogProjectId = project.Id };
+        var r2 = new MappingRule { Name = "R2", Priority = 20, TimelogProjectId = project.Id };
+        var r3 = new MappingRule { Name = "R3", Priority = 30, TimelogProjectId = project.Id };
+        _db.MappingRules.AddRange(r1, r2, r3);
+        await _db.SaveChangesAsync();
+        return (r1, r2, r3);
+    }
+
+    [Fact]
+    public async Task MovePriorityAsync_MovesRuleUp()
+    {
+        var (r1, r2, _) = await SeedThreeRulesAsync();
+
+        await _sut.MovePriorityAsync(r2.Id, -1);
+
+        var updated1 = await _db.MappingRules.FindAsync(r1.Id);
+        var updated2 = await _db.MappingRules.FindAsync(r2.Id);
+        Assert.Equal(20, updated1!.Priority);
+        Assert.Equal(10, updated2!.Priority);
+    }
+
+    [Fact]
+    public async Task MovePriorityAsync_MovesRuleDown()
+    {
+        var (_, r2, r3) = await SeedThreeRulesAsync();
+
+        await _sut.MovePriorityAsync(r2.Id, 1);
+
+        var updated2 = await _db.MappingRules.FindAsync(r2.Id);
+        var updated3 = await _db.MappingRules.FindAsync(r3.Id);
+        Assert.Equal(30, updated2!.Priority);
+        Assert.Equal(20, updated3!.Priority);
+    }
+
+    [Fact]
+    public async Task MovePriorityAsync_DoesNothingAtTopBoundary()
+    {
+        var (r1, _, _) = await SeedThreeRulesAsync();
+
+        await _sut.MovePriorityAsync(r1.Id, -1);
+
+        var updated = await _db.MappingRules.FindAsync(r1.Id);
+        Assert.Equal(10, updated!.Priority);
+    }
+
+    [Fact]
+    public async Task MovePriorityAsync_DoesNothingAtBottomBoundary()
+    {
+        var (_, _, r3) = await SeedThreeRulesAsync();
+
+        await _sut.MovePriorityAsync(r3.Id, 1);
+
+        var updated = await _db.MappingRules.FindAsync(r3.Id);
+        Assert.Equal(30, updated!.Priority);
+    }
+
     public void Dispose() => _db.Dispose();
 }

@@ -5,6 +5,7 @@ using MudBlazor;
 using MudBlazor.Services;
 using TimeLogger.Application.Services;
 using TimeLogger.Domain;
+using TimeLogger.Domain.Entities;
 using TimeLogger.Web.Components.Pages;
 
 namespace TimeLogger.Web.Tests.Pages;
@@ -15,17 +16,24 @@ public class SubmissionPageTests : BunitContext, IAsyncLifetime
     async Task IAsyncLifetime.DisposeAsync() { await DisposeAsync(); GC.SuppressFinalize(this); }
 
     private readonly Mock<ISubmissionService> _submissionServiceMock = new();
+    private readonly Mock<IAppUserService> _appUserServiceMock = new();
+    private readonly Mock<ITimelogDataService> _timelogDataServiceMock = new();
 
     public SubmissionPageTests()
     {
         Services.AddMudServices();
         Services.AddSingleton(_submissionServiceMock.Object);
+        Services.AddSingleton(_appUserServiceMock.Object);
+        Services.AddSingleton(_timelogDataServiceMock.Object);
 
         // Default empty state — individual tests can override
-        _submissionServiceMock.Setup(s => s.GetReadyToSubmitAsync(default)).ReturnsAsync([]);
-        _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(default)).ReturnsAsync(0);
-        _submissionServiceMock.Setup(s => s.GetFailedCountAsync(default)).ReturnsAsync(0);
-        _submissionServiceMock.Setup(s => s.GetRecentAsync(It.IsAny<int>(), default)).ReturnsAsync([]);
+        _submissionServiceMock.Setup(s => s.GetReadyToSubmitAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _submissionServiceMock.Setup(s => s.GetNeedsTaskAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        _submissionServiceMock.Setup(s => s.GetFailedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        _submissionServiceMock.Setup(s => s.GetRecentAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _appUserServiceMock.Setup(s => s.GetByOidAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((AppUser?)null);
+        _timelogDataServiceMock.Setup(s => s.GetTasksByProjectAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         AddAuthorization().SetAuthorized("test@example.com");
 
@@ -51,8 +59,8 @@ public class SubmissionPageTests : BunitContext, IAsyncLifetime
         {
             new(1, new DateOnly(2024, 1, 15), "Tempo", "PROJ-1", "Backend work", 2.0, "Dev User", "Dev Task"),
         };
-        _submissionServiceMock.Setup(s => s.GetReadyToSubmitAsync(default)).ReturnsAsync(readyEntries);
-        _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(default)).ReturnsAsync(5);
+        _submissionServiceMock.Setup(s => s.GetReadyToSubmitAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(readyEntries);
+        _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(5);
 
         var cut = Render<Submission>();
         await cut.InvokeAsync(() => Task.CompletedTask);
@@ -65,8 +73,8 @@ public class SubmissionPageTests : BunitContext, IAsyncLifetime
     [Fact]
     public async Task ShowsStatCounters()
     {
-        _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(default)).ReturnsAsync(42);
-        _submissionServiceMock.Setup(s => s.GetFailedCountAsync(default)).ReturnsAsync(3);
+        _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(42);
+        _submissionServiceMock.Setup(s => s.GetFailedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(3);
 
         var cut = Render<Submission>();
         await cut.InvokeAsync(() => Task.CompletedTask);
@@ -84,7 +92,7 @@ public class SubmissionPageTests : BunitContext, IAsyncLifetime
                 2.0, "Tempo", "Dev User", SubmissionStatus.Success,
                 DateTimeOffset.UtcNow.AddHours(-1), 1, null),
         };
-        _submissionServiceMock.Setup(s => s.GetRecentAsync(It.IsAny<int>(), default)).ReturnsAsync(history);
+        _submissionServiceMock.Setup(s => s.GetRecentAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(history);
 
         var cut = Render<Submission>();
         await cut.InvokeAsync(() => Task.CompletedTask);
