@@ -90,7 +90,7 @@ public class ApplyMappingsService(
             ?? throw new InvalidOperationException($"MappingRule {ruleId} not found.");
 
         var entries = await db.ImportedEntries
-            .Where(e => e.Status == ImportStatus.Pending)
+            .Where(e => e.Status == ImportStatus.Pending || e.Status == ImportStatus.Failed)
             .Include(e => e.ImportSource)
             .ToListAsync(cancellationToken);
 
@@ -110,7 +110,7 @@ public class ApplyMappingsService(
             ?? throw new InvalidOperationException($"MappingRule {ruleId} not found.");
 
         var entries = await db.ImportedEntries
-            .Where(e => e.Status == ImportStatus.Pending)
+            .Where(e => e.Status == ImportStatus.Pending || e.Status == ImportStatus.Failed)
             .Include(e => e.ImportSource)
             .ToListAsync(cancellationToken);
 

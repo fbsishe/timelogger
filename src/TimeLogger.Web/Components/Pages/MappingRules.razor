@@ -94,13 +94,15 @@ else
                            Color="Color.Primary" />
             </MudTd>
             <MudTd>
-                <MudIconButton Icon="@Icons.Material.Filled.Science" Size="Size.Small"
-                               OnClick="@(() => TestRuleAsync(context.Id))"
-                               Title="Test rule" />
-                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
-                               Color="Color.Success"
-                               OnClick="@(() => ApplyRuleAsync(context.Id))"
-                               Title="Apply rule to pending entries" />
+                <MudTooltip Text="Test rule — preview matching pending and failed entries">
+                    <MudIconButton Icon="@Icons.Material.Filled.Science" Size="Size.Small"
+                                   OnClick="@(() => TestRuleAsync(context.Id))" />
+                </MudTooltip>
+                <MudTooltip Text="Apply rule to pending and failed entries">
+                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
+                                   Color="Color.Success"
+                                   OnClick="@(() => ApplyRuleAsync(context.Id))" />
+                </MudTooltip>
                 <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
                                Title="Clone rule"
                                OnClick="@(() => OpenCloneDialog(context))" />
@@ -119,13 +121,13 @@ else
 {
     <MudPaper Class="mt-4 pa-4" Elevation="1">
         <MudText Typo="Typo.h6">
-            Test Results — @_testResults.Count matching pending entries
+            Test Results — @_testResults.Count matching pending / failed entries
             <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
                            OnClick="@(() => _testResults = null)" />
         </MudText>
         @if (_testResults.Count == 0)
         {
-            <MudAlert Severity="Severity.Info">No pending entries match this rule.</MudAlert>
+            <MudAlert Severity="Severity.Info">No pending or failed entries match this rule.</MudAlert>
         }
         else
         {
@@ -383,7 +385,7 @@ else
         if (mapped > 0)
             Snackbar.Add($"Mapped {mapped} entr{(mapped == 1 ? "y" : "ies")}.", Severity.Success);
         else
-            Snackbar.Add("No pending entries matched this rule.", Severity.Info);
+            Snackbar.Add("No pending or failed entries matched this rule.", Severity.Info);
     }
 
     private class RuleFormModel
