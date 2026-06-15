@@ -263,11 +263,17 @@ public class TempoImportServiceTests : IDisposable
     {
         var enabled = new ImportSource
         {
-            Name = "Enabled", SourceType = SourceType.Tempo, ApiToken = "tok", IsEnabled = true,
+            Name = "Enabled",
+            SourceType = SourceType.Tempo,
+            ApiToken = "tok",
+            IsEnabled = true,
         };
         var disabled = new ImportSource
         {
-            Name = "Disabled", SourceType = SourceType.Tempo, ApiToken = "tok", IsEnabled = false,
+            Name = "Disabled",
+            SourceType = SourceType.Tempo,
+            ApiToken = "tok",
+            IsEnabled = false,
         };
         _db.ImportSources.AddRange(enabled, disabled);
         await _db.SaveChangesAsync();

@@ -247,8 +247,20 @@ else
                     </MudChip>
                 </MudTd>
                 <MudTd>@context.AttemptCount</MudTd>
-                <MudTd Style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                    @context.ErrorMessage
+                <MudTd>
+                    @if (!string.IsNullOrEmpty(context.ErrorMessage))
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Style="max-width:220px">
+                            <MudText Style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:inherit">
+                                @context.ErrorMessage
+                            </MudText>
+                            <MudTooltip Text="View full error" Placement="Placement.Left">
+                                <MudIconButton Icon="@Icons.Material.Outlined.ErrorOutline"
+                                               Size="Size.Small" Color="Color.Error"
+                                               OnClick="@(() => ShowErrorDetailAsync(context.ErrorMessage))" />
+                            </MudTooltip>
+                        </MudStack>
+                    }
                 </MudTd>
                 <MudTd>
                     @if (context.Status == TimeLogger.Domain.SubmissionStatus.Failed)
@@ -393,6 +405,12 @@ else
         await SubmissionService.AcknowledgeAllFailuresAsync();
         Snackbar.Add("All failures acknowledged and hidden.", Severity.Info);
         await LoadAsync();
+    }
+
+    private async Task ShowErrorDetailAsync(string? error)
+    {
+        if (string.IsNullOrEmpty(error)) return;
+        await DialogService.ShowMessageBox("Submission Error", error, yesText: "Close");
     }
 
     private async Task SubmitAllAsync()

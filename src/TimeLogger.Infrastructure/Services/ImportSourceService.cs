@@ -32,8 +32,12 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
     {
         var source = new ImportSource
         {
-            Name = name, SourceType = sourceType, BaseUrl = baseUrl,
-            ApiToken = apiToken, PollSchedule = schedule, IsEnabled = true,
+            Name = name,
+            SourceType = sourceType,
+            BaseUrl = baseUrl,
+            ApiToken = apiToken,
+            PollSchedule = schedule,
+            IsEnabled = true,
         };
         db.ImportSources.Add(source);
         await db.SaveChangesAsync(ct);

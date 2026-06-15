@@ -21,13 +21,13 @@ public sealed class FileImportService(
     ILogger<FileImportService> logger) : IFileImportService
 {
     // Known column name aliases (lower-cased)
-    private static readonly string[] DateAliases        = ["date", "workdate", "work date", "work_date", "day"];
-    private static readonly string[] HoursAliases       = ["hours", "duration", "time", "timespent", "time spent", "time_spent", "h"];
-    private static readonly string[] EmailAliases       = ["email", "useremail", "user email", "user_email", "user", "author"];
-    private static readonly string[] DescAliases        = ["description", "comment", "notes", "note", "desc", "summary"];
-    private static readonly string[] ProjectAliases     = ["projectkey", "project key", "project_key", "project", "proj"];
-    private static readonly string[] IssueAliases       = ["issuekey", "issue key", "issue_key", "issue", "ticket", "jira"];
-    private static readonly string[] ActivityAliases    = ["activity", "type", "category", "work type"];
+    private static readonly string[] DateAliases = ["date", "workdate", "work date", "work_date", "day"];
+    private static readonly string[] HoursAliases = ["hours", "duration", "time", "timespent", "time spent", "time_spent", "h"];
+    private static readonly string[] EmailAliases = ["email", "useremail", "user email", "user_email", "user", "author"];
+    private static readonly string[] DescAliases = ["description", "comment", "notes", "note", "desc", "summary"];
+    private static readonly string[] ProjectAliases = ["projectkey", "project key", "project_key", "project", "proj"];
+    private static readonly string[] IssueAliases = ["issuekey", "issue key", "issue_key", "issue", "ticket", "jira"];
+    private static readonly string[] ActivityAliases = ["activity", "type", "category", "work type"];
 
     private static readonly HashSet<string> KnownAliases =
         [.. DateAliases, .. HoursAliases, .. EmailAliases, .. DescAliases,
@@ -80,20 +80,20 @@ public sealed class FileImportService(
 
             newEntries.Add(new ImportedEntry
             {
-                ImportSourceId      = sourceId,
-                ExternalId          = externalId,
-                WorkDate            = row.WorkDate,
-                TimeSpentSeconds    = row.TimeSpentSeconds,
-                UserEmail           = row.UserEmail,
-                Description         = row.Description,
-                ProjectKey          = row.ProjectKey,
-                IssueKey            = row.IssueKey,
-                Activity            = row.Activity,
-                MetadataJson        = row.ExtraColumns.Count > 0
+                ImportSourceId = sourceId,
+                ExternalId = externalId,
+                WorkDate = row.WorkDate,
+                TimeSpentSeconds = row.TimeSpentSeconds,
+                UserEmail = row.UserEmail,
+                Description = row.Description,
+                ProjectKey = row.ProjectKey,
+                IssueKey = row.IssueKey,
+                Activity = row.Activity,
+                MetadataJson = row.ExtraColumns.Count > 0
                     ? JsonSerializer.Serialize(row.ExtraColumns)
                     : null,
-                Status              = ImportStatus.Pending,
-                ImportedAt          = DateTimeOffset.UtcNow,
+                Status = ImportStatus.Pending,
+                ImportedAt = DateTimeOffset.UtcNow,
             });
             existingIds.Add(externalId);
             imported++;
@@ -234,13 +234,13 @@ public sealed class FileImportService(
         var rowErrors = new List<string>();
 
         // --- Required fields ---
-        var dateStr  = FindField(raw, DateAliases);
+        var dateStr = FindField(raw, DateAliases);
         var hoursStr = FindField(raw, HoursAliases);
-        var email    = FindField(raw, EmailAliases);
+        var email = FindField(raw, EmailAliases);
 
-        if (dateStr is null)  rowErrors.Add($"Row {rowNum}: missing date column.");
+        if (dateStr is null) rowErrors.Add($"Row {rowNum}: missing date column.");
         if (hoursStr is null) rowErrors.Add($"Row {rowNum}: missing hours column.");
-        if (email is null)    rowErrors.Add($"Row {rowNum}: missing email column.");
+        if (email is null) rowErrors.Add($"Row {rowNum}: missing email column.");
 
         if (rowErrors.Count > 0) { errors.AddRange(rowErrors); return false; }
 
@@ -258,9 +258,9 @@ public sealed class FileImportService(
 
         // --- Optional fields ---
         var description = FindField(raw, DescAliases);
-        var projectKey  = FindField(raw, ProjectAliases);
-        var issueKey    = FindField(raw, IssueAliases);
-        var activity    = FindField(raw, ActivityAliases);
+        var projectKey = FindField(raw, ProjectAliases);
+        var issueKey = FindField(raw, IssueAliases);
+        var activity = FindField(raw, ActivityAliases);
 
         // --- Extra columns → metadata ---
         var extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

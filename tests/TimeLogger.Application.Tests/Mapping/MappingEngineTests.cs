@@ -174,11 +174,11 @@ public class MappingEngineTests
     // ------------------------------------------------------------------
 
     [Theory]
-    [InlineData("ProjectKey",  "PROJ",             "PROJ")]
-    [InlineData("IssueKey",    "PROJ-42",           "PROJ-42")]
-    [InlineData("UserEmail",   "dev@example.com",   "dev@example.com")]
-    [InlineData("Description", "feature work",      "feature work")]
-    [InlineData("Activity",    "Development",       "Development")]
+    [InlineData("ProjectKey", "PROJ", "PROJ")]
+    [InlineData("IssueKey", "PROJ-42", "PROJ-42")]
+    [InlineData("UserEmail", "dev@example.com", "dev@example.com")]
+    [InlineData("Description", "feature work", "feature work")]
+    [InlineData("Activity", "Development", "Development")]
     public void StandardFields_MatchCorrectly(string field, string ruleValue, string entryValue)
     {
         var entry = MakeEntry(
@@ -273,8 +273,12 @@ public class MappingEngineTests
     {
         var rule = new MappingRule
         {
-            Id = 1, Name = "Multi", Priority = 1,
-            TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
+            Id = 1,
+            Name = "Multi",
+            Priority = 1,
+            TimelogProjectId = 1,
+            TimelogProject = MakeProject(),
+            IsEnabled = true,
             Conditions =
             [
                 new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" },
@@ -291,8 +295,12 @@ public class MappingEngineTests
     {
         var rule = new MappingRule
         {
-            Id = 1, Name = "Multi", Priority = 1,
-            TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
+            Id = 1,
+            Name = "Multi",
+            Priority = 1,
+            TimelogProjectId = 1,
+            TimelogProject = MakeProject(),
+            IsEnabled = true,
             Conditions =
             [
                 new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" },
@@ -310,8 +318,12 @@ public class MappingEngineTests
     {
         var rule = new MappingRule
         {
-            Id = 1, Name = "Empty", Priority = 1,
-            TimelogProjectId = 1, TimelogProject = MakeProject(), IsEnabled = true,
+            Id = 1,
+            Name = "Empty",
+            Priority = 1,
+            TimelogProjectId = 1,
+            TimelogProject = MakeProject(),
+            IsEnabled = true,
             Conditions = [],
         };
 
@@ -464,10 +476,15 @@ public class MappingEngineTests
         var task = MakeTask(10, 5);
         var rule = new MappingRule
         {
-            Id = 1, Name = "R",
+            Id = 1,
+            Name = "R",
             Conditions = [new() { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "X" }],
-            Priority = 1, TimelogProjectId = 5, TimelogProject = project,
-            TimelogTaskId = 10, TimelogTask = task, IsEnabled = true,
+            Priority = 1,
+            TimelogProjectId = 5,
+            TimelogProject = project,
+            TimelogTaskId = 10,
+            TimelogTask = task,
+            IsEnabled = true,
         };
 
         var result = MappingResult.Matched(rule, project, task);

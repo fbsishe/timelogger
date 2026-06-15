@@ -68,9 +68,9 @@ try
     builder.Services.AddCascadingAuthenticationState();
     builder.Services.AddAuthorization(options =>
     {
-        options.AddPolicy("AdminOnly",   p => p.RequireRole("Admin"));
+        options.AddPolicy("AdminOnly", p => p.RequireRole("Admin"));
         options.AddPolicy("ManagerPlus", p => p.RequireRole("Admin", "Manager"));
-        options.AddPolicy("AnyUser",     p => p.RequireAuthenticatedUser());
+        options.AddPolicy("AnyUser", p => p.RequireAuthenticatedUser());
     });
 
     var app = builder.Build();

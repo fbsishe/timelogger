@@ -33,13 +33,18 @@ public class ApplyMappingsServiceTests : IDisposable
 
         var project = new TimelogProject
         {
-            ExternalId = "proj-1", Name = "Alpha", LastSyncedAt = DateTimeOffset.UtcNow,
+            ExternalId = "proj-1",
+            Name = "Alpha",
+            LastSyncedAt = DateTimeOffset.UtcNow,
         };
         _db.TimelogProjects.Add(project);
 
         var task = new TimelogTask
         {
-            ExternalId = "task-1", Name = "Dev", TimelogProject = project, LastSyncedAt = DateTimeOffset.UtcNow,
+            ExternalId = "task-1",
+            Name = "Dev",
+            TimelogProject = project,
+            LastSyncedAt = DateTimeOffset.UtcNow,
         };
         _db.TimelogTasks.Add(task);
 
@@ -53,7 +58,9 @@ public class ApplyMappingsServiceTests : IDisposable
         {
             Name = "Rule",
             Conditions = [new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" }],
-            Priority = 1, TimelogProjectId = projectId, TimelogTaskId = taskId,
+            Priority = 1,
+            TimelogProjectId = projectId,
+            TimelogTaskId = taskId,
             IsEnabled = true,
         };
         _db.MappingRules.Add(rule);
@@ -65,9 +72,12 @@ public class ApplyMappingsServiceTests : IDisposable
     {
         var entry = new ImportedEntry
         {
-            ImportSourceId = sourceId, ExternalId = Guid.NewGuid().ToString(),
-            UserEmail = "dev@example.com", WorkDate = new DateOnly(2024, 1, 1),
-            TimeSpentSeconds = 3600, Status = status,
+            ImportSourceId = sourceId,
+            ExternalId = Guid.NewGuid().ToString(),
+            UserEmail = "dev@example.com",
+            WorkDate = new DateOnly(2024, 1, 1),
+            TimeSpentSeconds = 3600,
+            Status = status,
         };
         _db.ImportedEntries.Add(entry);
         await _db.SaveChangesAsync();

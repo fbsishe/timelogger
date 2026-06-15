@@ -79,11 +79,11 @@ public sealed class MappingEngine : IMappingEngine
 
         return fieldName.ToLowerInvariant() switch
         {
-            "projectkey"  => entry.ProjectKey,
-            "issuekey"    => entry.IssueKey,
-            "useremail"   => entry.UserEmail,
+            "projectkey" => entry.ProjectKey,
+            "issuekey" => entry.IssueKey,
+            "useremail" => entry.UserEmail,
             "description" => entry.Description,
-            "activity"    => entry.Activity,
+            "activity" => entry.Activity,
             _ => null,
         };
     }
@@ -118,9 +118,9 @@ public sealed class MappingEngine : IMappingEngine
         element.ValueKind switch
         {
             JsonValueKind.String => element.GetString(),
-            JsonValueKind.Null   => null,
+            JsonValueKind.Null => null,
             JsonValueKind.Undefined => null,
-            _                    => element.GetRawText(),
+            _ => element.GetRawText(),
         };
 
     private static Domain.SourceType DeriveSourceType(ImportedEntry entry) =>
