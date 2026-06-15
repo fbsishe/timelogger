@@ -13,7 +13,8 @@ public record EntryListItem(
     string? Description,
     string? UserEmail,
     string Status,
-    string? MetadataJson);
+    string? MetadataJson,
+    string? RawUserEmail = null);
 
 public interface IEntryService
 {

@@ -228,7 +228,7 @@ else
             ["projectKey"]  = entry.ProjectKey,
             ["issueKey"]    = entry.IssueKey,
             ["description"] = entry.Description,
-            ["userEmail"]   = entry.UserEmail,
+            ["userEmail"]   = entry.RawUserEmail ?? entry.UserEmail,
             ["status"]      = entry.Status,
         };
 
