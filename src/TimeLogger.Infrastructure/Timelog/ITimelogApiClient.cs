@@ -30,9 +30,22 @@ public interface ITimelogApiClient
     Task<TafListResponse<TimelogUserDto>> GetUsersAsync(
         CancellationToken cancellationToken = default);
 
-    /// <summary>Updates an existing time registration in Timelog. The registration is identified by the ID field in the body.</summary>
+    /// <summary>Updates an existing time registration in Timelog. The registration is identified by the ID (GUID) in the body.</summary>
     [Put("/v1/time-registration")]
     Task<IApiResponse> UpdateTimeRegistrationAsync(
         [Body] CreateTimeRegistrationDto model,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Returns all time tracking items for a given date range, including manually-entered registrations.</summary>
+    [Get("/v1/time-tracking-item/get-by-date")]
+    Task<TafListResponse<TimeTrackingItemDto>> GetTimeTrackingItemsByDateAsync(
+        [Query] string startDate,
+        [Query] string endDate,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a time registration by its server-assigned integer ID.</summary>
+    [Delete("/v1/time-registration/{id}")]
+    Task<IApiResponse> DeleteTimeRegistrationAsync(
+        int id,
         CancellationToken cancellationToken = default);
 }
