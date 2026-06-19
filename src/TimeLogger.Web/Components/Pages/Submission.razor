@@ -113,6 +113,34 @@ else
         }
     </MudStack>
 
+    @* Filter bar *@
+    <MudPaper Elevation="0" Class="mb-4 pa-3" Style="background:var(--mud-palette-background-grey)">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.FilterAlt" Size="Size.Small" Color="Color.Secondary" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">View entries for:</MudText>
+            <MudSelect T="string?"
+                       Value="_accountIdFilter"
+                       ValueChanged="OnEmployeeFilterChanged"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Dense="true"
+                       Style="min-width:220px"
+                       AnchorOrigin="Origin.BottomLeft">
+                <MudSelectItem T="string?" Value="@((string?)null)">All employees</MudSelectItem>
+                @if (_myAccountId is not null)
+                {
+                    <MudSelectItem T="string?" Value="@_myAccountId">
+                        Me — @(_employees.FirstOrDefault(e => e.AccountId == _myAccountId)?.DisplayName ?? _myAccountId)
+                    </MudSelectItem>
+                }
+                @foreach (var emp in _employees.Where(e => e.AccountId != _myAccountId))
+                {
+                    <MudSelectItem T="string?" Value="@emp.AccountId">@emp.DisplayName</MudSelectItem>
+                }
+            </MudSelect>
+        </MudStack>
+    </MudPaper>
+
     @* Conflicting entries section *@
     @if (_conflictEntries.Count > 0)
     {
@@ -300,8 +328,27 @@ else
     @* Audit trail *@
     @if (_history.Count > 0)
     {
-        <MudText Typo="Typo.h6" Class="mb-2">Recent Submission History</MudText>
-        <MudTable Items="_history" Hover="true" Dense="true" Striped="true" Elevation="1"
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.h6">Recent Submission History</MudText>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Filter:</MudText>
+                <MudChipSet T="SubmissionStatus" SelectionMode="SelectionMode.MultiSelection"
+                            SelectedValues="_historyStatusFilter"
+                            SelectedValuesChanged="@((IReadOnlyCollection<SubmissionStatus> v) => _historyStatusFilter = v)">
+                    <MudChip T="SubmissionStatus" Value="SubmissionStatus.Success"      Color="Color.Success" Size="Size.Small">Success</MudChip>
+                    <MudChip T="SubmissionStatus" Value="SubmissionStatus.Duplicate"    Color="Color.Info"    Size="Size.Small">Duplicate</MudChip>
+                    <MudChip T="SubmissionStatus" Value="SubmissionStatus.Failed"       Color="Color.Error"   Size="Size.Small">Failed</MudChip>
+                    <MudChip T="SubmissionStatus" Value="SubmissionStatus.Acknowledged" Color="Color.Default" Size="Size.Small">Acknowledged</MudChip>
+                </MudChipSet>
+                @if (_historyStatusFilter.Any())
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                   OnClick="@(() => { _historyStatusFilter = []; })"
+                                   Title="Clear status filter" />
+                }
+            </MudStack>
+        </MudStack>
+        <MudTable Items="FilteredHistory" Hover="true" Dense="true" Striped="true" Elevation="1"
                   RowsPerPage="50">
             <HeaderContent>
                 <MudTh><MudTableSortLabel SortBy="new Func<SubmissionHistoryItem, object>(x => x.WorkDate)">Date</MudTableSortLabel></MudTh>
@@ -388,24 +435,42 @@ else
     private int _submittedCount;
     private int _failedCount;
     private List<SubmissionHistoryItem> _history = [];
+    private IReadOnlyList<EmployeeSummary> _employees = [];
+    private string? _myAccountId;
+    private IReadOnlyCollection<SubmissionStatus> _historyStatusFilter = [];
+
+    private IEnumerable<SubmissionHistoryItem> FilteredHistory =>
+        !_historyStatusFilter.Any()
+            ? _history
+            : _history.Where(h => _historyStatusFilter.Contains(h.Status));
 
     protected override async Task OnInitializedAsync()
     {
-        _accountIdFilter = await ResolveAccountIdFilterAsync();
+        _employees = await SubmissionService.GetEmployeeSummariesAsync();
+        await ResolveFiltersAsync();
         await LoadAsync();
     }
 
-    private async Task<string?> ResolveAccountIdFilterAsync()
+    private async Task ResolveFiltersAsync()
     {
         var auth = await AuthState;
-        if (!auth.User.IsInRole("User")) return null;
 
         var oid = auth.User.FindFirst("oid")?.Value
             ?? auth.User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
-        if (oid is null) return null;
+        if (oid is not null)
+        {
+            var appUser = await AppUserService.GetByOidAsync(oid);
+            _myAccountId = appUser?.EmployeeMapping?.AtlassianAccountId;
+        }
 
-        var appUser = await AppUserService.GetByOidAsync(oid);
-        return appUser?.EmployeeMapping?.AtlassianAccountId;
+        // Default: Users see their own entries; Managers/Admins see all
+        _accountIdFilter = auth.User.IsInRole("User") ? _myAccountId : null;
+    }
+
+    private async Task OnEmployeeFilterChanged(string? value)
+    {
+        _accountIdFilter = value;
+        await LoadAsync();
     }
 
     private async Task LoadAsync()

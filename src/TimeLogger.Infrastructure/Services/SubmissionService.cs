@@ -280,4 +280,18 @@ public class SubmissionService(
         entry.Status = ImportStatus.Ignored;
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task<IReadOnlyList<EmployeeSummary>> GetEmployeeSummariesAsync(CancellationToken ct = default)
+    {
+        var mappings = await db.EmployeeMappings
+            .Where(m => m.AtlassianAccountId != null)
+            .OrderBy(m => m.DisplayName ?? m.TimelogUserDisplayName)
+            .ToListAsync(ct);
+
+        return mappings
+            .Select(m => new EmployeeSummary(
+                m.AtlassianAccountId!,
+                m.DisplayName ?? m.TimelogUserDisplayName ?? m.AtlassianAccountId!))
+            .ToList();
+    }
 }

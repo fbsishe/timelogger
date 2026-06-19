@@ -3,6 +3,8 @@ using TimeLogger.Domain;
 
 namespace TimeLogger.Application.Services;
 
+public record EmployeeSummary(string AccountId, string DisplayName);
+
 public record ConflictEntryItem(
     int Id,
     DateOnly WorkDate,
@@ -72,4 +74,5 @@ public interface ISubmissionService
     Task AcknowledgeFailureAsync(int submittedEntryId, CancellationToken ct = default);
     Task AcknowledgeAllFailuresAsync(CancellationToken ct = default);
     Task<SubmitOutcome> ResolveConflictAsync(int entryId, ConflictResolution resolution, double? customHours = null, CancellationToken ct = default);
+    Task<IReadOnlyList<EmployeeSummary>> GetEmployeeSummariesAsync(CancellationToken ct = default);
 }
