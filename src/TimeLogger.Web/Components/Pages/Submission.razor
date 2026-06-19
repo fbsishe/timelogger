@@ -52,6 +52,18 @@ else
         </MudItem>
         <MudItem xs="12" sm="3">
             <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Conflicts</MudText>
+                <MudText Typo="Typo.h4"
+                         Color="@(_conflictEntries.Count > 0 ? Color.Warning : Color.Default)">
+                    @_conflictEntries.Count
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Hours differ from Timelog
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="pa-4" Elevation="2">
                 <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Failed</MudText>
                 <MudText Typo="Typo.h4"
                          Color="@(_failedCount > 0 ? Color.Error : Color.Default)">
@@ -100,6 +112,81 @@ else
             <MudProgressCircular Size="Size.Small" Indeterminate="true" />
         }
     </MudStack>
+
+    @* Conflicting entries section *@
+    @if (_conflictEntries.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-3">
+            @_conflictEntries.Count entr@(_conflictEntries.Count == 1 ? "y has" : "ies have") hours that differ from what is already registered in Timelog.
+            Choose a resolution for each entry below.
+        </MudAlert>
+        <MudText Typo="Typo.h6" Class="mb-2">Conflicting Entries</MudText>
+        <MudTable T="ConflictEntryItem" Items="_conflictEntries"
+                  Hover="true" Dense="true" Striped="true" Elevation="1" Class="mb-4">
+            <HeaderContent>
+                <MudTh>Date</MudTh>
+                <MudTh>Source</MudTh>
+                <MudTh>Issue Key</MudTh>
+                <MudTh>Description</MudTh>
+                <MudTh>Our Hours</MudTh>
+                <MudTh>Timelog Hours</MudTh>
+                <MudTh>Employee</MudTh>
+                <MudTh>Task</MudTh>
+                <MudTh>Resolution</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.SourceName</MudTd>
+                <MudTd>@context.IssueKey</MudTd>
+                <MudTd Style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.Description
+                </MudTd>
+                <MudTd>@context.OurHours</MudTd>
+                <MudTd>
+                    <MudText Color="Color.Warning">@context.TimelogHours</MudText>
+                </MudTd>
+                <MudTd>@(context.UserDisplay ?? "—")</MudTd>
+                <MudTd>@(context.TimelogTaskName ?? "—")</MudTd>
+                <MudTd Style="min-width:260px">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudSelect T="ConflictResolution"
+                                   Value="_conflictResolutions.GetValueOrDefault(context.Id, ConflictResolution.UseOurs)"
+                                   ValueChanged="@(v => _conflictResolutions[context.Id] = v)"
+                                   Dense="true" Margin="Margin.Dense"
+                                   Style="min-width:160px"
+                                   AnchorOrigin="Origin.BottomLeft">
+                            <MudSelectItem T="ConflictResolution" Value="ConflictResolution.UseOurs">
+                                Use ours (@context.OurHours h)
+                            </MudSelectItem>
+                            <MudSelectItem T="ConflictResolution" Value="ConflictResolution.AddToExisting">
+                                Add together (@(context.OurHours + context.TimelogHours) h)
+                            </MudSelectItem>
+                            <MudSelectItem T="ConflictResolution" Value="ConflictResolution.SetCustom">
+                                Set custom value
+                            </MudSelectItem>
+                        </MudSelect>
+                        @if (_conflictResolutions.GetValueOrDefault(context.Id, ConflictResolution.UseOurs) == ConflictResolution.SetCustom)
+                        {
+                            <MudNumericField T="double?" Value="_conflictCustomHours.GetValueOrDefault(context.Id)"
+                                             ValueChanged="@(v => _conflictCustomHours[context.Id] = v)"
+                                             Min="0.01" Max="24" Step="0.5"
+                                             Placeholder="Hours" HideSpinButtons="true"
+                                             Dense="true" Margin="Margin.Dense"
+                                             Style="width:70px" />
+                        }
+                    </MudStack>
+                </MudTd>
+                <MudTd>
+                    <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Warning"
+                               Disabled="@_resolving"
+                               OnClick="@(() => ResolveConflictAsync(context))">
+                        Resolve
+                    </MudButton>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
 
     @* Ready entries table *@
     @if (_readyEntries.Count > 0)
@@ -241,8 +328,11 @@ else
                 <MudTd>@context.SubmittedAt.ToLocalTime().ToString("g")</MudTd>
                 <MudTd>
                     <MudChip T="string" Size="Size.Small"
-                             Color="@(context.Status == TimeLogger.Domain.SubmissionStatus.Success
-                                 ? Color.Success : Color.Error)">
+                             Color="@(context.Status switch {
+                                 SubmissionStatus.Success   => Color.Success,
+                                 SubmissionStatus.Duplicate => Color.Info,
+                                 _                          => Color.Error
+                             })">
                         @context.Status
                     </MudChip>
                 </MudTd>
@@ -285,11 +375,15 @@ else
 
     private bool _loading = true;
     private bool _submitting;
+    private bool _resolving;
     private string? _accountIdFilter;
     private List<ReadyEntryItem> _readyEntries = [];
     private HashSet<ReadyEntryItem> _selectedEntries = [];
     private List<NeedsTaskItem> _needsTaskEntries = [];
+    private List<ConflictEntryItem> _conflictEntries = [];
     private Dictionary<int, int?> _taskChoices = [];
+    private Dictionary<int, ConflictResolution> _conflictResolutions = [];
+    private Dictionary<int, double?> _conflictCustomHours = [];
     private Dictionary<int, IReadOnlyList<TimelogTaskSummary>> _projectTasks = [];
     private int _submittedCount;
     private int _failedCount;
@@ -321,9 +415,12 @@ else
         _taskChoices = [];
         _readyEntries      = (await SubmissionService.GetReadyToSubmitAsync(_accountIdFilter)).ToList();
         _needsTaskEntries  = (await SubmissionService.GetNeedsTaskAsync(_accountIdFilter)).ToList();
+        _conflictEntries   = (await SubmissionService.GetConflictsAsync(_accountIdFilter)).ToList();
         _submittedCount    = await SubmissionService.GetSubmittedCountAsync();
         _failedCount       = await SubmissionService.GetFailedCountAsync();
         _history           = (await SubmissionService.GetRecentAsync(accountIdFilter: _accountIdFilter)).ToList();
+        _conflictResolutions = [];
+        _conflictCustomHours = [];
 
         // Pre-load tasks for each distinct project that has needs-task entries
         _projectTasks = [];
@@ -358,14 +455,17 @@ else
         var ids = _selectedEntries.Select(e => e.Id).ToList();
         var result = await SubmissionService.SubmitSelectedAsync(ids);
 
-        if (result.Succeeded > 0 && result.Failed == 0 && result.Skipped == 0)
-            Snackbar.Add($"Submitted {result.Succeeded} entr{(result.Succeeded == 1 ? "y" : "ies")} successfully.", Severity.Success);
-        else if (result.Succeeded == 0 && result.Skipped > 0)
-            Snackbar.Add($"{result.Skipped} entr{(result.Skipped == 1 ? "y was" : "ies were")} skipped — Timelog task not synced yet. Run a Timelog sync and retry.", Severity.Warning);
-        else if (result.Succeeded == 0 && result.Failed > 0)
-            Snackbar.Add($"All {result.Failed} submission{(result.Failed == 1 ? "" : "s")} failed. Check the history table for details.", Severity.Error);
-        else
-            Snackbar.Add($"Submitted {result.Succeeded}, failed {result.Failed}, skipped {result.Skipped}.", result.Failed > 0 ? Severity.Warning : Severity.Success);
+        var parts = new List<string>();
+        if (result.Succeeded  > 0) parts.Add($"{result.Succeeded} submitted");
+        if (result.Duplicates > 0) parts.Add($"{result.Duplicates} already in Timelog (skipped)");
+        if (result.Conflicts  > 0) parts.Add($"{result.Conflicts} conflict{(result.Conflicts == 1 ? "" : "s")} need resolution");
+        if (result.Failed     > 0) parts.Add($"{result.Failed} failed");
+        if (result.Skipped    > 0) parts.Add($"{result.Skipped} skipped");
+
+        var severity = result.Failed > 0 ? Severity.Error
+            : result.Conflicts > 0 ? Severity.Warning
+            : Severity.Success;
+        Snackbar.Add(string.Join(", ", parts) + ".", severity);
 
         _submitting = false;
         await LoadAsync();
@@ -411,6 +511,31 @@ else
     {
         if (string.IsNullOrEmpty(error)) return;
         await DialogService.ShowMessageBox("Submission Error", error, yesText: "Close");
+    }
+
+    private async Task ResolveConflictAsync(ConflictEntryItem item)
+    {
+        var resolution = _conflictResolutions.GetValueOrDefault(item.Id, ConflictResolution.UseOurs);
+        double? customHours = resolution == ConflictResolution.SetCustom
+            ? _conflictCustomHours.GetValueOrDefault(item.Id)
+            : null;
+
+        if (resolution == ConflictResolution.SetCustom && (customHours == null || customHours <= 0))
+        {
+            Snackbar.Add("Enter a custom hours value greater than 0.", Severity.Warning);
+            return;
+        }
+
+        _resolving = true;
+        var outcome = await SubmissionService.ResolveConflictAsync(item.Id, resolution, customHours);
+        _resolving = false;
+
+        if (outcome == SubmitOutcome.Succeeded)
+            Snackbar.Add($"Conflict resolved for {item.IssueKey ?? item.Description ?? "entry"}.", Severity.Success);
+        else
+            Snackbar.Add("Resolution failed — check logs for details.", Severity.Error);
+
+        await LoadAsync();
     }
 
     private async Task SubmitAllAsync()

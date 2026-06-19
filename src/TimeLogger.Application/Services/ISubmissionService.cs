@@ -1,6 +1,19 @@
+using TimeLogger.Application.Interfaces;
 using TimeLogger.Domain;
 
 namespace TimeLogger.Application.Services;
+
+public record ConflictEntryItem(
+    int Id,
+    DateOnly WorkDate,
+    string SourceName,
+    string? IssueKey,
+    string? Description,
+    double OurHours,
+    double TimelogHours,
+    string? UserDisplay,
+    string? TimelogTaskName,
+    string? TimelogRegistrationId);
 
 public record SubmissionHistoryItem(
     int Id,
@@ -37,9 +50,9 @@ public record NeedsTaskItem(
     int TimelogProjectId,
     string ProjectName);
 
-public record SubmissionBatchResult(int Succeeded, int Failed, int Skipped)
+public record SubmissionBatchResult(int Succeeded, int Failed, int Skipped, int Duplicates = 0, int Conflicts = 0)
 {
-    public int Total => Succeeded + Failed + Skipped;
+    public int Total => Succeeded + Failed + Skipped + Duplicates + Conflicts;
 }
 
 public interface ISubmissionService
@@ -47,13 +60,16 @@ public interface ISubmissionService
     Task<int> GetReadyToSubmitCountAsync(CancellationToken ct = default);
     Task<int> GetSubmittedCountAsync(CancellationToken ct = default);
     Task<int> GetFailedCountAsync(CancellationToken ct = default);
+    Task<int> GetConflictCountAsync(CancellationToken ct = default);
     Task<IReadOnlyList<SubmissionHistoryItem>> GetRecentAsync(int limit = 200, string? accountIdFilter = null, CancellationToken ct = default);
     Task<IReadOnlyList<ReadyEntryItem>> GetReadyToSubmitAsync(string? accountIdFilter = null, CancellationToken ct = default);
     Task<IReadOnlyList<NeedsTaskItem>> GetNeedsTaskAsync(string? accountIdFilter = null, CancellationToken ct = default);
+    Task<IReadOnlyList<ConflictEntryItem>> GetConflictsAsync(string? accountIdFilter = null, CancellationToken ct = default);
     Task AssignTaskAsync(int entryId, int taskId, CancellationToken ct = default);
     Task TriggerSubmitAllAsync(CancellationToken ct = default);
     Task<SubmissionBatchResult> SubmitSelectedAsync(IReadOnlyList<int> entryIds, CancellationToken ct = default);
     Task SkipAsync(int entryId, CancellationToken ct = default);
     Task AcknowledgeFailureAsync(int submittedEntryId, CancellationToken ct = default);
     Task AcknowledgeAllFailuresAsync(CancellationToken ct = default);
+    Task<SubmitOutcome> ResolveConflictAsync(int entryId, ConflictResolution resolution, double? customHours = null, CancellationToken ct = default);
 }

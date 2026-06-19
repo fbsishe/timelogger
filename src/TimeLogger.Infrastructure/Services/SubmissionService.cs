@@ -25,6 +25,10 @@ public class SubmissionService(
         await db.SubmittedEntries
             .CountAsync(s => s.Status == SubmissionStatus.Failed, ct);
 
+    public async Task<int> GetConflictCountAsync(CancellationToken ct = default) =>
+        await db.ImportedEntries
+            .CountAsync(e => e.Status == ImportStatus.Conflict, ct);
+
     public async Task AcknowledgeFailureAsync(int submittedEntryId, CancellationToken ct = default)
     {
         var entry = await db.SubmittedEntries.FindAsync([submittedEntryId], ct)
@@ -200,18 +204,73 @@ public class SubmissionService(
             .Where(e => entryIds.Contains(e.Id))
             .ToListAsync(ct);
 
-        int succeeded = 0, failed = 0, skipped = 0;
+        int succeeded = 0, failed = 0, skipped = 0, duplicates = 0, conflicts = 0;
         foreach (var entry in entries)
         {
             switch (await submitter.SubmitAsync(entry, ct))
             {
-                case SubmitOutcome.Succeeded: succeeded++; break;
-                case SubmitOutcome.Failed: failed++; break;
-                case SubmitOutcome.Skipped: skipped++; break;
+                case SubmitOutcome.Succeeded:  succeeded++;  break;
+                case SubmitOutcome.Failed:     failed++;     break;
+                case SubmitOutcome.Skipped:    skipped++;    break;
+                case SubmitOutcome.Duplicate:  duplicates++; break;
+                case SubmitOutcome.Conflict:   conflicts++;  break;
             }
         }
 
-        return new SubmissionBatchResult(succeeded, failed, skipped);
+        return new SubmissionBatchResult(succeeded, failed, skipped, duplicates, conflicts);
+    }
+
+    public async Task<IReadOnlyList<ConflictEntryItem>> GetConflictsAsync(string? accountIdFilter = null, CancellationToken ct = default)
+    {
+        var query = db.ImportedEntries
+            .Where(e => e.Status == ImportStatus.Conflict);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        var entries = await query
+            .Include(e => e.ImportSource)
+            .Include(e => e.TimelogTask)
+            .OrderBy(e => e.WorkDate)
+            .ToListAsync(ct);
+
+        var accountIds = entries
+            .Where(e => e.UserEmail != null)
+            .Select(e => e.UserEmail!)
+            .Distinct()
+            .ToList();
+
+        var mappings = accountIds.Count > 0
+            ? await db.EmployeeMappings
+                .Where(m => accountIds.Contains(m.AtlassianAccountId))
+                .ToDictionaryAsync(m => m.AtlassianAccountId, m => m.DisplayName ?? m.TimelogUserDisplayName, ct)
+            : [];
+
+        return entries.Select(e =>
+        {
+            var userDisplay = e.UserEmail != null && mappings.TryGetValue(e.UserEmail, out var name)
+                ? name : e.UserEmail;
+            return new ConflictEntryItem(
+                e.Id,
+                e.WorkDate,
+                e.ImportSource?.Name ?? "Unknown",
+                e.IssueKey,
+                e.Description,
+                Math.Round(e.TimeSpentSeconds / 3600.0, 2),
+                e.ConflictHoursInTimelog ?? 0,
+                userDisplay,
+                e.TimelogTask?.Name,
+                e.ConflictTimelogRegistrationId);
+        }).ToList();
+    }
+
+    public async Task<SubmitOutcome> ResolveConflictAsync(int entryId, ConflictResolution resolution, double? customHours = null, CancellationToken ct = default)
+    {
+        var entry = await db.ImportedEntries
+            .Include(e => e.TimelogTask)
+            .FirstOrDefaultAsync(e => e.Id == entryId, ct)
+            ?? throw new InvalidOperationException($"Entry {entryId} not found.");
+        return await submitter.ResolveConflictAsync(entry, resolution, customHours, ct);
     }
 
     public async Task SkipAsync(int entryId, CancellationToken ct = default)

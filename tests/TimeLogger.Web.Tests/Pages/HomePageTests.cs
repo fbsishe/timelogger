@@ -16,6 +16,7 @@ public class HomePageTests : BunitContext, IAsyncLifetime
     private readonly Mock<IEntryService> _entryServiceMock = new();
     private readonly Mock<ITimelogDataService> _timelogDataServiceMock = new();
     private readonly Mock<IImportSourceService> _importSourceServiceMock = new();
+    private readonly Mock<ISubmissionService> _submissionServiceMock = new();
 
     public HomePageTests()
     {
@@ -23,12 +24,14 @@ public class HomePageTests : BunitContext, IAsyncLifetime
         Services.AddSingleton(_entryServiceMock.Object);
         Services.AddSingleton(_timelogDataServiceMock.Object);
         Services.AddSingleton(_importSourceServiceMock.Object);
+        Services.AddSingleton(_submissionServiceMock.Object);
 
         // Provide default empty returns so LoadAsync never crashes on unmocked calls
         _entryServiceMock.Setup(s => s.GetUnmappedAsync(default)).ReturnsAsync([]);
         _timelogDataServiceMock.Setup(s => s.GetLastSyncedAtAsync(default)).ReturnsAsync((DateTimeOffset?)null);
         _timelogDataServiceMock.Setup(s => s.GetProjectsAsync(It.IsAny<bool>(), default)).ReturnsAsync([]);
         _importSourceServiceMock.Setup(s => s.GetAllAsync(default)).ReturnsAsync([]);
+        _submissionServiceMock.Setup(s => s.GetConflictsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         AddAuthorization().SetAuthorized("test@example.com");
 

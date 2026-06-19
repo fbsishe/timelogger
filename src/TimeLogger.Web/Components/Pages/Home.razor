@@ -4,6 +4,7 @@
 @inject IEntryService EntryService
 @inject ITimelogDataService TimelogDataService
 @inject IImportSourceService ImportSourceService
+@inject ISubmissionService SubmissionService
 @inject NavigationManager Nav
 
 <PageTitle>Dashboard – TimeLogger</PageTitle>
@@ -35,6 +36,17 @@ else
             <MudPaper Class="pa-4" Elevation="2">
                 <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Import Sources</MudText>
                 <MudText Typo="Typo.h4">@_sourcesCount</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">Conflicts</MudText>
+                <MudText Typo="Typo.h4" Color="@(_conflictEntries.Count > 0 ? Color.Warning : Color.Default)">
+                    @_conflictEntries.Count
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Hours differ from Timelog
+                </MudText>
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -86,6 +98,46 @@ else
     {
         <MudAlert Severity="Severity.Success" Class="mb-4">All entries are mapped.</MudAlert>
     }
+
+    @if (_conflictEntries.Count > 0)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2" Spacing="2">
+            <MudText Typo="Typo.h5">Conflicting Entries</MudText>
+            <MudSpacer />
+            <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                       StartIcon="@Icons.Material.Filled.OpenInNew"
+                       OnClick="@(() => Nav.NavigateTo("/submission"))">
+                Resolve on Submission page
+            </MudButton>
+        </MudStack>
+        <MudTable Items="_conflictEntries" Hover="true" Dense="true" Striped="true"
+                  Class="mb-4" Elevation="1">
+            <HeaderContent>
+                <MudTh>Date</MudTh>
+                <MudTh>Source</MudTh>
+                <MudTh>Issue Key</MudTh>
+                <MudTh>Description</MudTh>
+                <MudTh>Our Hours</MudTh>
+                <MudTh>Timelog Hours</MudTh>
+                <MudTh>Employee</MudTh>
+                <MudTh>Task</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.SourceName</MudTd>
+                <MudTd>@context.IssueKey</MudTd>
+                <MudTd Style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    @context.Description
+                </MudTd>
+                <MudTd>@context.OurHours</MudTd>
+                <MudTd>
+                    <MudText Color="Color.Warning">@context.TimelogHours</MudText>
+                </MudTd>
+                <MudTd>@context.UserDisplay</MudTd>
+                <MudTd>@context.TimelogTaskName</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
 }
 
 @* Quick-map dialog *@
@@ -131,6 +183,7 @@ else
     private DateTimeOffset? _lastSyncedAt;
     private int _sourcesCount;
     private List<EntryListItem> _unmappedEntries = [];
+    private List<ConflictEntryItem> _conflictEntries = [];
     private List<TimelogProjectSummary> _projects = [];
     private List<TimelogTaskSummary> _tasks = [];
 
@@ -149,6 +202,7 @@ else
         _loading = true;
         _unmappedEntries = (await EntryService.GetUnmappedAsync()).ToList();
         _unmappedCount = _unmappedEntries.Count;
+        _conflictEntries = (await SubmissionService.GetConflictsAsync()).ToList();
         _lastSyncedAt = await TimelogDataService.GetLastSyncedAtAsync();
         _sourcesCount = (await ImportSourceService.GetAllAsync()).Count;
         _projects = (await TimelogDataService.GetProjectsAsync()).ToList();

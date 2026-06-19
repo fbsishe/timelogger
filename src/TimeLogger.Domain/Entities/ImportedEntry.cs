@@ -42,4 +42,8 @@ public class ImportedEntry
     public TimelogTask? TimelogTask { get; set; }
 
     public SubmittedEntry? SubmittedEntry { get; set; }
+
+    // Set when a conflicting registration is found in Timelog during submission
+    public double? ConflictHoursInTimelog { get; set; }
+    public string? ConflictTimelogRegistrationId { get; set; }
 }

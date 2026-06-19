@@ -21,6 +21,7 @@
         <MudChip T="string" Value="@("Failed")" Color="Color.Error">Failed</MudChip>
         <MudChip T="string" Value="@("Mapped")" Color="Color.Info">Mapped</MudChip>
         <MudChip T="string" Value="@("Submitted")" Color="Color.Success">Submitted</MudChip>
+        <MudChip T="string" Value="@("Conflict")" Color="Color.Warning">Conflict</MudChip>
         <MudChip T="string" Value="@("Ignored")" Color="Color.Default">Ignored</MudChip>
     </MudChipSet>
     <MudSpacer />
@@ -248,6 +249,7 @@ else
         "Failed"    => Color.Error,
         "Mapped"    => Color.Info,
         "Submitted" => Color.Success,
+        "Conflict"  => Color.Warning,
         _           => Color.Default,
     };
 }

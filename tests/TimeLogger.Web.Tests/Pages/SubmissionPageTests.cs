@@ -32,6 +32,7 @@ public class SubmissionPageTests : BunitContext, IAsyncLifetime
         _submissionServiceMock.Setup(s => s.GetSubmittedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
         _submissionServiceMock.Setup(s => s.GetFailedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
         _submissionServiceMock.Setup(s => s.GetRecentAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _submissionServiceMock.Setup(s => s.GetConflictsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
         _appUserServiceMock.Setup(s => s.GetByOidAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((AppUser?)null);
         _timelogDataServiceMock.Setup(s => s.GetTasksByProjectAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
 

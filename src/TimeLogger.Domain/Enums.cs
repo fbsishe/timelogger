@@ -13,6 +13,7 @@ public enum ImportStatus
     Submitted = 2,
     Failed = 3,
     Ignored = 4,
+    Conflict = 5,
 }
 
 public enum SubmissionStatus
@@ -21,6 +22,14 @@ public enum SubmissionStatus
     Failed = 2,
     Retrying = 3,
     Acknowledged = 4,
+    Duplicate = 5,
+}
+
+public enum ConflictResolution
+{
+    UseOurs = 1,
+    AddToExisting = 2,
+    SetCustom = 3,
 }
 
 public enum MatchOperator

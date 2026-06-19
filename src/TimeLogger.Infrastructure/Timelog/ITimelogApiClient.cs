@@ -29,4 +29,20 @@ public interface ITimelogApiClient
     [Get("/v1/user?$pagesize=500")]
     Task<TafListResponse<TimelogUserDto>> GetUsersAsync(
         CancellationToken cancellationToken = default);
+
+    /// <summary>Returns time registrations matching the given filters.</summary>
+    [Get("/v1/time-registration/filter?$pagesize=500")]
+    Task<TafListResponse<TimelogTimeRegistrationDto>> GetTimeRegistrationsAsync(
+        [Query] int? taskId = null,
+        [Query] int? userId = null,
+        [Query] string? dateFrom = null,
+        [Query] string? dateTo = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Updates an existing time registration in Timelog.</summary>
+    [Put("/v1/time-registration/{id}")]
+    Task<IApiResponse> UpdateTimeRegistrationAsync(
+        string id,
+        [Body] CreateTimeRegistrationDto model,
+        CancellationToken cancellationToken = default);
 }
