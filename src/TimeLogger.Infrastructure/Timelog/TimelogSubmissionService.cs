@@ -51,73 +51,68 @@ public class TimelogSubmissionService(
             return SubmitOutcome.Skipped;
         }
 
-        var dateStr = entry.WorkDate.ToString("yyyy-MM-dd");
         var ourHours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2);
 
-        // Pre-flight: check for an existing registration in Timelog for the same task/user/date.
-        try
+        // Pre-flight: check our own SubmittedEntries for a previous successful submission to the
+        // same task/user/date. The Timelog API has no list/filter endpoint for time registrations,
+        // so local-DB history is the only source of truth we have.
+        var previousSubmission = await db.SubmittedEntries
+            .Include(s => s.ImportedEntry)
+            .Where(s => s.Status == SubmissionStatus.Success
+                && s.ImportedEntryId != entry.Id
+                && s.ImportedEntry.TimelogTaskId == entry.TimelogTaskId
+                && s.ImportedEntry.UserEmail == entry.UserEmail
+                && s.ImportedEntry.WorkDate == entry.WorkDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (previousSubmission is not null)
         {
-            var existing = await apiClient.GetTimeRegistrationsAsync(
-                taskId: resolvedApiTaskId,
-                userId: employeeMapping?.TimelogUserId,
-                dateFrom: dateStr,
-                dateTo: dateStr,
-                cancellationToken: cancellationToken);
+            var previousHours = Math.Round(previousSubmission.ImportedEntry.TimeSpentSeconds / 3600.0, 2);
 
-            if (existing?.Data is { Count: > 0 } items)
+            if (Math.Abs(previousHours - ourHours) < 0.01)
             {
-                var match = items[0];
-                if (Math.Abs(match.Hours - ourHours) < 0.01)
+                logger.LogInformation(
+                    "Entry {EntryId} matches a previously submitted entry ({PrevId}) with identical hours ({Hours}h) — marking as Duplicate",
+                    entry.Id, previousSubmission.ImportedEntryId, ourHours);
+
+                entry.Status = ImportStatus.Submitted;
+                var existingAudit = await db.SubmittedEntries
+                    .FirstOrDefaultAsync(s => s.ImportedEntryId == entry.Id, cancellationToken);
+
+                if (existingAudit is null)
                 {
-                    logger.LogInformation(
-                        "Entry {EntryId} already exists in Timelog with matching hours ({Hours}h) — marking as Duplicate",
-                        entry.Id, match.Hours);
-
-                    entry.Status = ImportStatus.Submitted;
-                    var existingSubmission = await db.SubmittedEntries
-                        .FirstOrDefaultAsync(s => s.ImportedEntryId == entry.Id, cancellationToken);
-
-                    if (existingSubmission is null)
+                    db.SubmittedEntries.Add(new SubmittedEntry
                     {
-                        db.SubmittedEntries.Add(new SubmittedEntry
-                        {
-                            ImportedEntryId = entry.Id,
-                            ExternalId = match.Id,
-                            Status = SubmissionStatus.Duplicate,
-                            SubmittedAt = DateTimeOffset.UtcNow,
-                            AttemptCount = 1,
-                        });
-                    }
-                    else
-                    {
-                        existingSubmission.Status = SubmissionStatus.Duplicate;
-                        existingSubmission.SubmittedAt = DateTimeOffset.UtcNow;
-                        existingSubmission.ExternalId = match.Id;
-                        existingSubmission.ErrorMessage = null;
-                    }
-
-                    await db.SaveChangesAsync(cancellationToken);
-                    return SubmitOutcome.Duplicate;
+                        ImportedEntryId = entry.Id,
+                        ExternalId = previousSubmission.ExternalId,
+                        Status = SubmissionStatus.Duplicate,
+                        SubmittedAt = DateTimeOffset.UtcNow,
+                        AttemptCount = 1,
+                    });
                 }
                 else
                 {
-                    logger.LogInformation(
-                        "Entry {EntryId} conflicts with existing Timelog registration (ours {Ours}h, theirs {Theirs}h) — flagging for user resolution",
-                        entry.Id, ourHours, match.Hours);
-
-                    entry.Status = ImportStatus.Conflict;
-                    entry.ConflictHoursInTimelog = match.Hours;
-                    entry.ConflictTimelogRegistrationId = match.Id;
-                    await db.SaveChangesAsync(cancellationToken);
-                    return SubmitOutcome.Conflict;
+                    existingAudit.Status = SubmissionStatus.Duplicate;
+                    existingAudit.SubmittedAt = DateTimeOffset.UtcNow;
+                    existingAudit.ExternalId = previousSubmission.ExternalId;
+                    existingAudit.ErrorMessage = null;
                 }
+
+                await db.SaveChangesAsync(cancellationToken);
+                return SubmitOutcome.Duplicate;
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex,
-                "Conflict pre-flight check failed for entry {EntryId}; proceeding with normal submission",
-                entry.Id);
+            else
+            {
+                logger.LogInformation(
+                    "Entry {EntryId} conflicts with previously submitted entry ({PrevId}): ours {Ours}h, previous {Previous}h — flagging for user resolution",
+                    entry.Id, previousSubmission.ImportedEntryId, ourHours, previousHours);
+
+                entry.Status = ImportStatus.Conflict;
+                entry.ConflictHoursInTimelog = previousHours;
+                entry.ConflictTimelogRegistrationId = previousSubmission.ExternalId;
+                await db.SaveChangesAsync(cancellationToken);
+                return SubmitOutcome.Conflict;
+            }
         }
 
         var comment = entry.Description;
@@ -128,10 +123,10 @@ public class TimelogSubmissionService(
                 comment = $"{entry.IssueKey} - {comment}";
         }
 
-        var existingAudit = await db.SubmittedEntries
+        var existingSubmission = await db.SubmittedEntries
             .FirstOrDefaultAsync(s => s.ImportedEntryId == entry.Id, cancellationToken);
 
-        var clientId = existingAudit?.ExternalId is { } stored
+        var clientId = existingSubmission?.ExternalId is { } stored
             ? Guid.Parse(stored)
             : Guid.NewGuid();
 
@@ -139,14 +134,14 @@ public class TimelogSubmissionService(
         {
             Id = clientId,
             TaskId = resolvedApiTaskId,
-            Date = dateStr,
+            Date = entry.WorkDate.ToString("yyyy-MM-dd"),
             Hours = ourHours,
             Comment = comment,
             Billable = false,
             UserId = employeeMapping?.TimelogUserId,
         };
 
-        var attemptCount = (existingAudit?.AttemptCount ?? 0) + 1;
+        var attemptCount = (existingSubmission?.AttemptCount ?? 0) + 1;
 
         SubmitOutcome outcome;
 
@@ -162,7 +157,7 @@ public class TimelogSubmissionService(
                 entry.Status = ImportStatus.Submitted;
                 outcome = SubmitOutcome.Succeeded;
 
-                if (existingAudit is null)
+                if (existingSubmission is null)
                 {
                     db.SubmittedEntries.Add(new SubmittedEntry
                     {
@@ -175,11 +170,11 @@ public class TimelogSubmissionService(
                 }
                 else
                 {
-                    existingAudit.ExternalId = clientId.ToString();
-                    existingAudit.Status = SubmissionStatus.Success;
-                    existingAudit.SubmittedAt = DateTimeOffset.UtcNow;
-                    existingAudit.AttemptCount = attemptCount;
-                    existingAudit.ErrorMessage = null;
+                    existingSubmission.ExternalId = clientId.ToString();
+                    existingSubmission.Status = SubmissionStatus.Success;
+                    existingSubmission.SubmittedAt = DateTimeOffset.UtcNow;
+                    existingSubmission.AttemptCount = attemptCount;
+                    existingSubmission.ErrorMessage = null;
                 }
             }
             else
@@ -190,7 +185,7 @@ public class TimelogSubmissionService(
 
                 entry.Status = ImportStatus.Failed;
                 outcome = SubmitOutcome.Failed;
-                PersistFailure(db, existingAudit, entry.Id, attemptCount, $"{(int)response.StatusCode}: {error}");
+                PersistFailure(db, existingSubmission, entry.Id, attemptCount, $"{(int)response.StatusCode}: {error}");
             }
         }
         catch (Exception ex)
@@ -198,7 +193,7 @@ public class TimelogSubmissionService(
             logger.LogError(ex, "Exception submitting entry {EntryId} to Timelog", entry.Id);
             entry.Status = ImportStatus.Failed;
             outcome = SubmitOutcome.Failed;
-            PersistFailure(db, existingAudit, entry.Id, attemptCount, ex.Message);
+            PersistFailure(db, existingSubmission, entry.Id, attemptCount, ex.Message);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -232,6 +227,13 @@ public class TimelogSubmissionService(
             return SubmitOutcome.Skipped;
         }
 
+        if (!Guid.TryParse(entry.ConflictTimelogRegistrationId, out var registrationGuid))
+        {
+            logger.LogError("Entry {EntryId} has an invalid ConflictTimelogRegistrationId '{Id}' — cannot resolve",
+                entry.Id, entry.ConflictTimelogRegistrationId);
+            return SubmitOutcome.Skipped;
+        }
+
         var task = entry.TimelogTaskId.HasValue
             ? await db.TimelogTasks.FindAsync([entry.TimelogTaskId.Value], cancellationToken)
             : null;
@@ -248,10 +250,10 @@ public class TimelogSubmissionService(
         var ourHours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2);
         var targetHours = resolution switch
         {
-            ConflictResolution.UseOurs      => ourHours,
+            ConflictResolution.UseOurs       => ourHours,
             ConflictResolution.AddToExisting => Math.Round(ourHours + (entry.ConflictHoursInTimelog ?? 0), 2),
-            ConflictResolution.SetCustom    => Math.Round(customHours ?? ourHours, 2),
-            _                               => ourHours,
+            ConflictResolution.SetCustom     => Math.Round(customHours ?? ourHours, 2),
+            _                                => ourHours,
         };
 
         var comment = entry.Description;
@@ -262,9 +264,10 @@ public class TimelogSubmissionService(
                 comment = $"{entry.IssueKey} - {comment}";
         }
 
+        // PUT /v1/time-registration — the registration is identified by the ID in the body.
         var model = new CreateTimeRegistrationDto
         {
-            Id = Guid.Parse(entry.ConflictTimelogRegistrationId),
+            Id = registrationGuid,
             TaskId = resolvedApiTaskId,
             Date = entry.WorkDate.ToString("yyyy-MM-dd"),
             Hours = targetHours,
@@ -275,8 +278,7 @@ public class TimelogSubmissionService(
 
         try
         {
-            var response = await apiClient.UpdateTimeRegistrationAsync(
-                entry.ConflictTimelogRegistrationId, model, cancellationToken);
+            var response = await apiClient.UpdateTimeRegistrationAsync(model, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
@@ -296,7 +298,7 @@ public class TimelogSubmissionService(
                     db.SubmittedEntries.Add(new SubmittedEntry
                     {
                         ImportedEntryId = entry.Id,
-                        ExternalId = model.Id.ToString(),
+                        ExternalId = registrationGuid.ToString(),
                         Status = SubmissionStatus.Success,
                         SubmittedAt = DateTimeOffset.UtcNow,
                         AttemptCount = 1,
@@ -306,7 +308,7 @@ public class TimelogSubmissionService(
                 {
                     existingAudit.Status = SubmissionStatus.Success;
                     existingAudit.SubmittedAt = DateTimeOffset.UtcNow;
-                    existingAudit.ExternalId = model.Id.ToString();
+                    existingAudit.ExternalId = registrationGuid.ToString();
                     existingAudit.ErrorMessage = null;
                 }
 
