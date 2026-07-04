@@ -7,7 +7,7 @@ using TimeLogger.Infrastructure.Persistence;
 
 namespace TimeLogger.Infrastructure.Services;
 
-public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappingRuleService
+public class MappingRuleService(AppDbContext db, IMappingEngine engine, IAuditLogService auditLog) : IMappingRuleService
 {
     public async Task<IReadOnlyList<MappingRuleDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -53,6 +53,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         };
         db.MappingRules.Add(rule);
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("MappingRule", "Created", rule.Name, ct: ct);
         return rule;
     }
 
@@ -81,6 +82,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         }).ToList();
 
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("MappingRule", "Updated", rule.Name, ct: ct);
     }
 
     public async Task DeleteAsync(int id, CancellationToken ct = default)
@@ -89,6 +91,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
             ?? throw new InvalidOperationException($"Rule {id} not found.");
         db.MappingRules.Remove(rule);
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("MappingRule", "Deleted", rule.Name, ct: ct);
     }
 
     public async Task SetEnabledAsync(int id, bool enabled, CancellationToken ct = default)
@@ -97,6 +100,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
             ?? throw new InvalidOperationException($"Rule {id} not found.");
         rule.IsEnabled = enabled;
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("MappingRule", enabled ? "Enabled" : "Disabled", rule.Name, ct: ct);
     }
 
     public async Task MovePriorityAsync(int id, int direction, CancellationToken ct = default)

@@ -26,7 +26,9 @@ public class AppUserServiceTests : IDisposable
         _apiClientMock
             .Setup(c => c.GetUsersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TafListResponse<TimelogUserDto>());
-        _sut = new AppUserService(_db, _apiClientMock.Object, NullLogger<AppUserService>.Instance);
+        _sut = new AppUserService(_db, _apiClientMock.Object,
+            new Mock<TimeLogger.Application.Services.IAuditLogService>().Object,
+            NullLogger<AppUserService>.Instance);
     }
 
     [Fact]

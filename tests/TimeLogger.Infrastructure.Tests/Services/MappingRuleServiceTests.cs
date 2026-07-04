@@ -22,7 +22,7 @@ public class MappingRuleServiceTests : IDisposable
             .Options;
         _db = new AppDbContext(options);
         _engineMock = new Mock<IMappingEngine>();
-        _sut = new MappingRuleService(_db, _engineMock.Object);
+        _sut = new MappingRuleService(_db, _engineMock.Object, new Mock<IAuditLogService>().Object);
     }
 
     // ------------------------------------------------------------------

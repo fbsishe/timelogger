@@ -12,6 +12,7 @@ public class EmployeeMappingService(
     AppDbContext db,
     ITimelogApiClient timelogApiClient,
     IJiraApiClient jiraApiClient,
+    IAuditLogService auditLog,
     ILogger<EmployeeMappingService> logger) : IEmployeeMappingService
 {
     public async Task<IReadOnlyList<EmployeeMappingDto>> GetAllAsync(CancellationToken ct = default)
@@ -88,6 +89,13 @@ public class EmployeeMappingService(
 
         if (currentlyLinked.Count > 0 || request.AppUserId.HasValue)
             await db.SaveChangesAsync(ct);
+
+        await auditLog.LogAsync(
+            "EmployeeMapping",
+            existing is null ? "Created" : "Updated",
+            request.DisplayName ?? request.AtlassianAccountId,
+            $"Timelog user: {request.TimelogUserDisplayName ?? "—"}, excluded: {request.IsExcluded}",
+            ct);
     }
 
     public async Task DeleteAsync(int id, CancellationToken ct = default)
@@ -96,6 +104,8 @@ public class EmployeeMappingService(
             ?? throw new InvalidOperationException($"EmployeeMapping {id} not found.");
         db.EmployeeMappings.Remove(mapping);
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("EmployeeMapping", "Deleted",
+            mapping.DisplayName ?? mapping.AtlassianAccountId, ct: ct);
     }
 
     public async Task<IReadOnlyList<KnownAccountIdDto>> GetUnmappedAccountIdsAsync(CancellationToken ct = default)

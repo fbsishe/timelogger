@@ -9,7 +9,7 @@ using TimeLogger.Infrastructure.Tempo;
 
 namespace TimeLogger.Infrastructure.Services;
 
-public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITempoImportService tempoImport, IApplyMappingsService applyMappings) : IImportSourceService
+public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITempoImportService tempoImport, IApplyMappingsService applyMappings, IAuditLogService auditLog) : IImportSourceService
 {
     public async Task<IReadOnlyList<ImportSourceDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -41,6 +41,7 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
         };
         db.ImportSources.Add(source);
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("ImportSource", "Created", name, $"Type: {sourceType}", ct);
         return source;
     }
 
@@ -55,6 +56,7 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
         source.PollSchedule = schedule;
         source.IsEnabled = isEnabled;
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("ImportSource", "Updated", name, ct: ct);
     }
 
     public async Task DeleteAsync(int id, CancellationToken ct = default)
@@ -63,6 +65,7 @@ public class ImportSourceService(AppDbContext db, IBackgroundJobClient jobs, ITe
             ?? throw new InvalidOperationException($"Source {id} not found.");
         db.ImportSources.Remove(source);
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("ImportSource", "Deleted", source.Name, ct: ct);
     }
 
     public async Task<IReadOnlyList<ImportHistoryEntry>> GetImportHistoryAsync(

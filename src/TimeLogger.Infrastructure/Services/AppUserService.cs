@@ -11,6 +11,7 @@ namespace TimeLogger.Infrastructure.Services;
 public class AppUserService(
     AppDbContext db,
     ITimelogApiClient timelogApiClient,
+    IAuditLogService auditLog,
     ILogger<AppUserService> logger) : IAppUserService
 {
     public async Task<AppUser> EnsureUserAsync(string oid, string email, string displayName, CancellationToken ct = default)
@@ -78,6 +79,7 @@ public class AppUserService(
             ?? throw new InvalidOperationException($"AppUser {userId} not found.");
         user.Role = role;
         await db.SaveChangesAsync(ct);
+        await auditLog.LogAsync("UserRole", "Changed", user.DisplayName ?? user.Email, $"New role: {role}", ct);
     }
 
     public async Task SetProjectsAsync(int userId, IReadOnlyList<int> projectIds, CancellationToken ct = default)
@@ -91,6 +93,10 @@ public class AppUserService(
             db.AppUserProjects.Add(new AppUserProject { AppUserId = userId, TimelogProjectId = pid });
 
         await db.SaveChangesAsync(ct);
+
+        var user = await db.AppUsers.FindAsync([userId], ct);
+        await auditLog.LogAsync("UserProjects", "Changed", user?.DisplayName ?? user?.Email,
+            $"{projectIds.Count} project(s) assigned", ct);
     }
 
     private async Task TryAutoMatchAsync(AppUser user, CancellationToken ct)

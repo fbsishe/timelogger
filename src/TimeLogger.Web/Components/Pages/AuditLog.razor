@@ -1,0 +1,75 @@
+@page "/audit-log"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "AdminOnly")]
+@inject IAuditLogService AuditLogService
+
+<PageTitle>Audit Log – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-1">Audit Log</MudText>
+<MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+    Configuration changes with actor and timestamp — rules, sources, employee mappings, and role assignments.
+</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_items.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No configuration changes recorded yet.</MudAlert>
+}
+else
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudSelect T="string?" Label="Category" Value="_categoryFilter" ValueChanged="OnCategoryChanged"
+                   Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
+                   Style="max-width:220px" AnchorOrigin="Origin.BottomLeft">
+            <MudSelectItem T="string?" Value="@((string?)null)">All categories</MudSelectItem>
+            @foreach (var category in _items.Select(i => i.Category).Distinct().Order())
+            {
+                <MudSelectItem T="string?" Value="@category">@category</MudSelectItem>
+            }
+        </MudSelect>
+    </MudStack>
+
+    <MudTable Items="FilteredItems" Hover="true" Dense="true" Striped="true" Elevation="1" RowsPerPage="50">
+        <HeaderContent>
+            <MudTh>Time</MudTh>
+            <MudTh>Actor</MudTh>
+            <MudTh>Category</MudTh>
+            <MudTh>Action</MudTh>
+            <MudTh>Subject</MudTh>
+            <MudTh>Details</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+            <MudTd>@context.Actor</MudTd>
+            <MudTd><MudChip T="string" Size="Size.Small">@context.Category</MudChip></MudTd>
+            <MudTd>@context.Action</MudTd>
+            <MudTd>@context.Subject</MudTd>
+            <MudTd Style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                @context.Details
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private List<AuditLogItem> _items = [];
+    private string? _categoryFilter;
+
+    private IEnumerable<AuditLogItem> FilteredItems =>
+        _categoryFilter is null ? _items : _items.Where(i => i.Category == _categoryFilter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _items = (await AuditLogService.GetRecentAsync()).ToList();
+        _loading = false;
+    }
+
+    private void OnCategoryChanged(string? value) => _categoryFilter = value;
+}

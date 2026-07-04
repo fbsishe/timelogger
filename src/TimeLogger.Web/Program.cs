@@ -46,6 +46,9 @@ try
             "Add it to appsettings.json or as an environment variable.");
 
     builder.Services.AddInfrastructure(builder.Configuration);
+    // Replace the fallback current-user provider with the circuit-aware one for audit logging
+    builder.Services.AddScoped<TimeLogger.Application.Services.ICurrentUserProvider,
+        TimeLogger.Web.Services.CircuitCurrentUserProvider>();
     builder.Services.AddMudServices();
     builder.Services.AddHealthChecks();
     builder.Services.AddRazorComponents()

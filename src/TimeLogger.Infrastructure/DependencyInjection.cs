@@ -80,6 +80,10 @@ public static class DependencyInjection
         services.AddScoped<IEmployeeMappingService, EmployeeMappingService>();
         services.AddScoped<IAppUserService, AppUserService>();
 
+        // Audit log — Web replaces the fallback provider with the circuit-aware one
+        services.AddScoped<ICurrentUserProvider, SystemCurrentUserProvider>();
+        services.AddScoped<IAuditLogService, AuditLogService>();
+
         // Job health monitoring & failure notifications
         services.Configure<JobHealthOptions>(configuration.GetSection(JobHealthOptions.SectionName));
         services.Configure<NotificationOptions>(configuration.GetSection(NotificationOptions.SectionName));
