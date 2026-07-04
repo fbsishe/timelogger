@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using TimeLogger.Application.Interfaces;
+using TimeLogger.Application.Services;
 
 namespace TimeLogger.Infrastructure.Timelog;
 
@@ -8,6 +9,7 @@ namespace TimeLogger.Infrastructure.Timelog;
 /// </summary>
 public class SubmitMappedEntriesJob(
     ITimelogSubmissionService submissionService,
+    IJobHealthService jobHealth,
     ILogger<SubmitMappedEntriesJob> logger)
 {
     public const string JobId = "timelog-submit";
@@ -20,10 +22,12 @@ public class SubmitMappedEntriesJob(
         {
             await submissionService.SubmitAllPendingAsync(cancellationToken);
             logger.LogInformation("SubmitMappedEntriesJob completed");
+            await jobHealth.RecordSuccessAsync(JobId, cancellationToken);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "SubmitMappedEntriesJob failed");
+            await jobHealth.RecordFailureAsync(JobId, ex.Message, cancellationToken);
             throw;
         }
     }

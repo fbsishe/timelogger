@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using TimeLogger.Application.Interfaces;
+using TimeLogger.Application.Services;
 
 namespace TimeLogger.Infrastructure.Tempo;
 
@@ -10,6 +11,7 @@ namespace TimeLogger.Infrastructure.Tempo;
 public class PullTempoWorklogsJob(
     ITempoImportService importService,
     IApplyMappingsService mappingService,
+    IJobHealthService jobHealth,
     ILogger<PullTempoWorklogsJob> logger)
 {
     public const string JobId = "tempo-pull";
@@ -23,10 +25,12 @@ public class PullTempoWorklogsJob(
             await importService.ImportYesterdayAsync(cancellationToken);
             var mapped = await mappingService.ApplyAllPendingAsync(cancellationToken);
             logger.LogInformation("PullTempoWorklogsJob completed — {Mapped} entries mapped", mapped);
+            await jobHealth.RecordSuccessAsync(JobId, cancellationToken);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "PullTempoWorklogsJob failed");
+            await jobHealth.RecordFailureAsync(JobId, ex.Message, cancellationToken);
             throw;
         }
     }

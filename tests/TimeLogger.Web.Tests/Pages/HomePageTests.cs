@@ -17,6 +17,7 @@ public class HomePageTests : BunitContext, IAsyncLifetime
     private readonly Mock<ITimelogDataService> _timelogDataServiceMock = new();
     private readonly Mock<IImportSourceService> _importSourceServiceMock = new();
     private readonly Mock<ISubmissionService> _submissionServiceMock = new();
+    private readonly Mock<IJobHealthService> _jobHealthServiceMock = new();
 
     public HomePageTests()
     {
@@ -25,6 +26,7 @@ public class HomePageTests : BunitContext, IAsyncLifetime
         Services.AddSingleton(_timelogDataServiceMock.Object);
         Services.AddSingleton(_importSourceServiceMock.Object);
         Services.AddSingleton(_submissionServiceMock.Object);
+        Services.AddSingleton(_jobHealthServiceMock.Object);
 
         // Provide default empty returns so LoadAsync never crashes on unmocked calls
         _entryServiceMock.Setup(s => s.GetUnmappedAsync(default)).ReturnsAsync([]);
@@ -32,6 +34,7 @@ public class HomePageTests : BunitContext, IAsyncLifetime
         _timelogDataServiceMock.Setup(s => s.GetProjectsAsync(It.IsAny<bool>(), default)).ReturnsAsync([]);
         _importSourceServiceMock.Setup(s => s.GetAllAsync(default)).ReturnsAsync([]);
         _submissionServiceMock.Setup(s => s.GetConflictsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _jobHealthServiceMock.Setup(s => s.GetUnhealthyJobsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         AddAuthorization().SetAuthorized("test@example.com");
 
@@ -106,5 +109,29 @@ public class HomePageTests : BunitContext, IAsyncLifetime
         await cut.InvokeAsync(() => Task.CompletedTask);
 
         Assert.Contains("Never", cut.Markup);
+    }
+
+    [Fact]
+    public async Task ShowsJobHealthBanner_WhenJobIsUnhealthy()
+    {
+        _jobHealthServiceMock
+            .Setup(s => s.GetUnhealthyJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new JobHealthStatus("tempo-pull", 3, DateTimeOffset.UtcNow, "API down")]);
+
+        var cut = Render<Home>();
+        await cut.InvokeAsync(() => Task.CompletedTask);
+
+        Assert.Contains("tempo-pull", cut.Markup);
+        Assert.Contains("failed 3 times", cut.Markup);
+        Assert.Contains("API down", cut.Markup);
+    }
+
+    [Fact]
+    public async Task HidesJobHealthBanner_WhenAllJobsHealthy()
+    {
+        var cut = Render<Home>();
+        await cut.InvokeAsync(() => Task.CompletedTask);
+
+        Assert.DoesNotContain("failed", cut.Markup);
     }
 }

@@ -5,6 +5,7 @@
 @inject ITimelogDataService TimelogDataService
 @inject IImportSourceService ImportSourceService
 @inject ISubmissionService SubmissionService
+@inject IJobHealthService JobHealthService
 @inject NavigationManager Nav
 
 <PageTitle>Dashboard – TimeLogger</PageTitle>
@@ -17,6 +18,19 @@
 }
 else
 {
+    @foreach (var job in _unhealthyJobs)
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-3">
+            Background job <b>@job.JobName</b> has failed @job.ConsecutiveFailures times in a row
+            (last: @job.LastRunAt.ToLocalTime().ToString("g")).
+            @if (!string.IsNullOrEmpty(job.LastError))
+            {
+                <span> Error: @job.LastError</span>
+            }
+            Check the <MudLink Href="/hangfire" Target="_blank">Hangfire dashboard</MudLink> before this becomes a data gap.
+        </MudAlert>
+    }
+
     <MudGrid Spacing="3" Class="mb-4">
         <MudItem xs="12" sm="6" md="3">
             <MudPaper Class="pa-4" Elevation="2">
@@ -186,6 +200,7 @@ else
     private List<ConflictEntryItem> _conflictEntries = [];
     private List<TimelogProjectSummary> _projects = [];
     private List<TimelogTaskSummary> _tasks = [];
+    private IReadOnlyList<JobHealthStatus> _unhealthyJobs = [];
 
     private bool _mapDialogOpen;
     private EntryListItem? _mapTarget;
@@ -206,6 +221,7 @@ else
         _lastSyncedAt = await TimelogDataService.GetLastSyncedAtAsync();
         _sourcesCount = (await ImportSourceService.GetAllAsync()).Count;
         _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
+        _unhealthyJobs = await JobHealthService.GetUnhealthyJobsAsync();
         _loading = false;
     }
 

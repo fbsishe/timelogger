@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<EmployeeMapping> EmployeeMappings => Set<EmployeeMapping>();
     public DbSet<AppUser> AppUsers => Set<AppUser>();
     public DbSet<AppUserProject> AppUserProjects => Set<AppUserProject>();
+    public DbSet<JobExecution> JobExecutions => Set<JobExecution>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

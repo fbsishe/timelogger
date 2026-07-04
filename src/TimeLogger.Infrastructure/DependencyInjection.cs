@@ -9,6 +9,7 @@ using TimeLogger.Application.Mapping;
 using TimeLogger.Application.Services;
 using TimeLogger.Infrastructure.FileImport;
 using TimeLogger.Infrastructure.Jira;
+using TimeLogger.Infrastructure.Jobs;
 using TimeLogger.Infrastructure.Mapping;
 using TimeLogger.Infrastructure.Persistence;
 using TimeLogger.Infrastructure.Services;
@@ -78,6 +79,13 @@ public static class DependencyInjection
         services.AddScoped<ISubmissionService, SubmissionService>();
         services.AddScoped<IEmployeeMappingService, EmployeeMappingService>();
         services.AddScoped<IAppUserService, AppUserService>();
+
+        // Job health monitoring & failure notifications
+        services.Configure<JobHealthOptions>(configuration.GetSection(JobHealthOptions.SectionName));
+        services.Configure<NotificationOptions>(configuration.GetSection(NotificationOptions.SectionName));
+        services.AddHttpClient("Notifications");
+        services.AddScoped<IJobHealthService, JobHealthService>();
+        services.AddScoped<IJobFailureNotifier, JobFailureNotifier>();
 
         // Hangfire
         var connectionString = configuration.GetConnectionString("Default")!;
