@@ -45,6 +45,11 @@
                 @SettingRow("Base URL", Configuration["Jira:BaseUrl"])
                 @SettingRow("Email", Configuration["Jira:Email"])
                 @SettingRow("API Token", Configuration["Jira:ApiToken"], masked: true)
+                @SettingRow("Timelog Account Field", Configuration["Mapping:TimelogAccountFieldKey"])
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    Jira custom field holding the Timelog Account value, e.g. <code>customfield_10501</code>.
+                    When empty, all custom fields are scanned for mapping suggestions.
+                </MudText>
             </MudCardContent>
         </MudCard>
     </MudItem>

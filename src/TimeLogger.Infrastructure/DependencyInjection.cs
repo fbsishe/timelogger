@@ -65,6 +65,8 @@ public static class DependencyInjection
         services.AddScoped<ITempoImportService, TempoImportService>();
         services.AddSingleton<IMappingEngine, MappingEngine>();
         services.AddScoped<IApplyMappingsService, ApplyMappingsService>();
+        services.Configure<MappingSuggestionOptions>(configuration.GetSection(MappingSuggestionOptions.SectionName));
+        services.AddScoped<IMappingSuggestionService, MappingSuggestionService>();
 
         // UI application services
         services.AddScoped<IEntryService, EntryService>();
