@@ -81,6 +81,11 @@
             <MudNavLink Href="/submission" Icon="@Icons.Material.Filled.Send">
                 Submission
             </MudNavLink>
+            <AuthorizeView Policy="ManagerPlus">
+                <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Assessment">
+                    Reports
+                </MudNavLink>
+            </AuthorizeView>
             <AuthorizeView Policy="AdminOnly">
                 <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">
                     Settings

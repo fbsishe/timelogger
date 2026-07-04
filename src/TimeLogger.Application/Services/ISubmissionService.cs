@@ -57,6 +57,13 @@ public record SubmissionBatchResult(int Succeeded, int Failed, int Skipped, int 
     public int Total => Succeeded + Failed + Skipped + Duplicates + Conflicts;
 }
 
+/// <summary>Aggregated submitted hours for one employee within one Timelog project.</summary>
+public record SubmissionSummaryRow(
+    string Employee,
+    string Project,
+    int EntryCount,
+    double Hours);
+
 public interface ISubmissionService
 {
     Task<int> GetReadyToSubmitCountAsync(CancellationToken ct = default);
@@ -75,4 +82,11 @@ public interface ISubmissionService
     Task AcknowledgeAllFailuresAsync(CancellationToken ct = default);
     Task<SubmitOutcome> ResolveConflictAsync(int entryId, ConflictResolution resolution, double? customHours = null, CancellationToken ct = default);
     Task<IReadOnlyList<EmployeeSummary>> GetEmployeeSummariesAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Hours successfully submitted (incl. duplicates already in Timelog) per employee,
+    /// grouped by Timelog project, for entries whose work date falls in the range.
+    /// </summary>
+    Task<IReadOnlyList<SubmissionSummaryRow>> GetSubmissionSummaryAsync(
+        DateOnly from, DateOnly to, CancellationToken ct = default);
 }

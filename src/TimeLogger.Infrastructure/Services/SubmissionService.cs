@@ -294,4 +294,47 @@ public class SubmissionService(
                 m.DisplayName ?? m.TimelogUserDisplayName ?? m.AtlassianAccountId!))
             .ToList();
     }
+
+    public async Task<IReadOnlyList<SubmissionSummaryRow>> GetSubmissionSummaryAsync(
+        DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var submissions = await db.SubmittedEntries
+            .Where(s => s.Status == SubmissionStatus.Success || s.Status == SubmissionStatus.Duplicate)
+            .Include(s => s.ImportedEntry)
+                .ThenInclude(e => e.TimelogProject)
+            .Where(s => s.ImportedEntry.WorkDate >= from && s.ImportedEntry.WorkDate <= to)
+            .ToListAsync(ct);
+
+        var accountIds = submissions
+            .Select(s => s.ImportedEntry.UserEmail)
+            .Where(e => e != null)
+            .Distinct()
+            .ToList();
+
+        var mappings = accountIds.Count > 0
+            ? await db.EmployeeMappings
+                .Where(m => accountIds.Contains(m.AtlassianAccountId)
+                            && (m.DisplayName != null || m.TimelogUserDisplayName != null))
+                .ToDictionaryAsync(m => m.AtlassianAccountId,
+                                   m => (m.DisplayName ?? m.TimelogUserDisplayName)!, ct)
+            : [];
+
+        return submissions
+            .GroupBy(s => new
+            {
+                Employee = s.ImportedEntry.UserEmail is { } email && mappings.TryGetValue(email, out var name)
+                    ? name
+                    : s.ImportedEntry.UserEmail ?? "(unknown)",
+                Project = s.ImportedEntry.TimelogProject?.Name ?? "(no project)",
+            })
+            .Select(g => new SubmissionSummaryRow(
+                g.Key.Employee,
+                g.Key.Project,
+                g.Count(),
+                Math.Round(g.Sum(s => s.ImportedEntry.TimeSpentSeconds) / 3600.0, 2)))
+            .OrderBy(r => r.Employee)
+            .ThenBy(r => r.Project)
+            .ToList()
+            .AsReadOnly();
+    }
 }

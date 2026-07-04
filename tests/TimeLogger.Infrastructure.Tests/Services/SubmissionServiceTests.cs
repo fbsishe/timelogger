@@ -159,5 +159,93 @@ public class SubmissionServiceTests : IDisposable
         Assert.Equal(SubmissionStatus.Retrying, updatedRetrying!.Status);
     }
 
+    // ------------------------------------------------------------------
+    // GetSubmissionSummaryAsync
+    // ------------------------------------------------------------------
+
+    private async Task SeedSubmissionForSummaryAsync(
+        string accountId, string projectName, DateOnly workDate, int seconds,
+        SubmissionStatus status = SubmissionStatus.Success)
+    {
+        var source = await _db.ImportSources.FirstOrDefaultAsync();
+        if (source is null)
+        {
+            source = new ImportSource { Name = "S", SourceType = SourceType.Tempo };
+            _db.ImportSources.Add(source);
+            await _db.SaveChangesAsync();
+        }
+
+        var project = await _db.TimelogProjects.FirstOrDefaultAsync(p => p.Name == projectName);
+        if (project is null)
+        {
+            project = new TimelogProject
+            {
+                ExternalId = Guid.NewGuid().ToString(),
+                Name = projectName,
+                LastSyncedAt = DateTimeOffset.UtcNow,
+            };
+            _db.TimelogProjects.Add(project);
+            await _db.SaveChangesAsync();
+        }
+
+        var entry = new ImportedEntry
+        {
+            ExternalId = Guid.NewGuid().ToString(),
+            UserEmail = accountId,
+            WorkDate = workDate,
+            TimeSpentSeconds = seconds,
+            Status = ImportStatus.Submitted,
+            ImportSourceId = source.Id,
+            TimelogProjectId = project.Id,
+        };
+        _db.ImportedEntries.Add(entry);
+        await _db.SaveChangesAsync();
+
+        _db.SubmittedEntries.Add(new SubmittedEntry
+        {
+            ImportedEntryId = entry.Id,
+            Status = status,
+            SubmittedAt = DateTimeOffset.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task GetSubmissionSummaryAsync_GroupsByEmployeeAndProject()
+    {
+        _db.EmployeeMappings.Add(new EmployeeMapping { AtlassianAccountId = "acc-1", DisplayName = "Jane" });
+        await _db.SaveChangesAsync();
+
+        await SeedSubmissionForSummaryAsync("acc-1", "Alpha", new DateOnly(2026, 6, 10), 3600);
+        await SeedSubmissionForSummaryAsync("acc-1", "Alpha", new DateOnly(2026, 6, 11), 7200);
+        await SeedSubmissionForSummaryAsync("acc-1", "Beta", new DateOnly(2026, 6, 12), 1800);
+
+        var rows = await _sut.GetSubmissionSummaryAsync(new DateOnly(2026, 6, 1), new DateOnly(2026, 6, 30));
+
+        Assert.Equal(2, rows.Count);
+        var alpha = rows.Single(r => r.Project == "Alpha");
+        Assert.Equal("Jane", alpha.Employee);
+        Assert.Equal(2, alpha.EntryCount);
+        Assert.Equal(3.0, alpha.Hours);
+        var beta = rows.Single(r => r.Project == "Beta");
+        Assert.Equal(0.5, beta.Hours);
+    }
+
+    [Fact]
+    public async Task GetSubmissionSummaryAsync_ExcludesOutOfRangeAndFailed()
+    {
+        await SeedSubmissionForSummaryAsync("acc-1", "Alpha", new DateOnly(2026, 5, 31), 3600);
+        await SeedSubmissionForSummaryAsync("acc-1", "Alpha", new DateOnly(2026, 6, 10), 3600,
+            SubmissionStatus.Failed);
+        await SeedSubmissionForSummaryAsync("acc-1", "Alpha", new DateOnly(2026, 6, 10), 3600,
+            SubmissionStatus.Duplicate);
+
+        var rows = await _sut.GetSubmissionSummaryAsync(new DateOnly(2026, 6, 1), new DateOnly(2026, 6, 30));
+
+        var row = Assert.Single(rows);
+        Assert.Equal(1, row.EntryCount);
+        Assert.Equal(1.0, row.Hours);
+    }
+
     public void Dispose() => _db.Dispose();
 }

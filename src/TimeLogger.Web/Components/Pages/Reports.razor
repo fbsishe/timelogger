@@ -1,0 +1,150 @@
+@page "/reports"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "ManagerPlus")]
+@inject ISubmissionService SubmissionService
+@inject IJSRuntime JS
+
+<PageTitle>Reports – TimeLogger</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-1">Submission Summary</MudText>
+<MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+    Hours submitted to Timelog per employee, grouped by project, for the selected work-date range.
+</MudText>
+
+<MudPaper Elevation="0" Class="mb-4 pa-3" Style="background:var(--mud-palette-background-grey)">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+        <MudDatePicker Label="From" Date="_from" DateChanged="OnFromChanged"
+                       Margin="Margin.Dense" Variant="Variant.Outlined" Style="max-width:180px" />
+        <MudDatePicker Label="To" Date="_to" DateChanged="OnToChanged"
+                       Margin="Margin.Dense" Variant="Variant.Outlined" Style="max-width:180px" />
+        <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+            <MudButton OnClick="@(() => SetRangeAsync(ThisMonth))">This month</MudButton>
+            <MudButton OnClick="@(() => SetRangeAsync(LastMonth))">Last month</MudButton>
+        </MudButtonGroup>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Download"
+                   Disabled="@(_loading || _rows.Count == 0)"
+                   OnClick="ExportCsvAsync">
+            Export CSV
+        </MudButton>
+    </MudStack>
+</MudPaper>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_rows.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No submitted hours in the selected range.</MudAlert>
+}
+else
+{
+    @foreach (var employeeGroup in _rows.GroupBy(r => r.Employee))
+    {
+        <MudText Typo="Typo.h6" Class="mb-1 mt-4">@employeeGroup.Key</MudText>
+        <MudTable Items="employeeGroup" Dense="true" Hover="true" Elevation="1" Class="mb-1">
+            <HeaderContent>
+                <MudTh>Timelog Project</MudTh>
+                <MudTh Style="text-align:right">Entries</MudTh>
+                <MudTh Style="text-align:right">Hours</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Project</MudTd>
+                <MudTd Style="text-align:right">@context.EntryCount</MudTd>
+                <MudTd Style="text-align:right">@context.Hours.ToString("0.##")</MudTd>
+            </RowTemplate>
+        </MudTable>
+        <MudText Typo="Typo.subtitle2" Align="Align.Right" Class="mb-3 pr-4">
+            Subtotal: @employeeGroup.Sum(r => r.EntryCount) entries · @employeeGroup.Sum(r => r.Hours).ToString("0.##") h
+        </MudText>
+    }
+
+    <MudDivider Class="my-2" />
+    <MudText Typo="Typo.h6" Align="Align.Right" Class="pr-4">
+        Total: @_rows.Sum(r => r.EntryCount) entries · @_rows.Sum(r => r.Hours).ToString("0.##") h
+    </MudText>
+}
+
+@code {
+    private bool _loading = true;
+    private DateTime? _from;
+    private DateTime? _to;
+    private List<SubmissionSummaryRow> _rows = [];
+
+    private static (DateTime From, DateTime To) ThisMonth
+    {
+        get
+        {
+            var today = DateTime.Today;
+            var first = new DateTime(today.Year, today.Month, 1);
+            return (first, first.AddMonths(1).AddDays(-1));
+        }
+    }
+
+    private static (DateTime From, DateTime To) LastMonth
+    {
+        get
+        {
+            var today = DateTime.Today;
+            var first = new DateTime(today.Year, today.Month, 1).AddMonths(-1);
+            return (first, first.AddMonths(1).AddDays(-1));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        (_from, _to) = ThisMonth;
+        await LoadAsync();
+    }
+
+    private async Task SetRangeAsync((DateTime From, DateTime To) range)
+    {
+        (_from, _to) = range;
+        await LoadAsync();
+    }
+
+    private async Task OnFromChanged(DateTime? value)
+    {
+        _from = value;
+        await LoadAsync();
+    }
+
+    private async Task OnToChanged(DateTime? value)
+    {
+        _to = value;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_from is null || _to is null) return;
+
+        _loading = true;
+        _rows = (await SubmissionService.GetSubmissionSummaryAsync(
+            DateOnly.FromDateTime(_from.Value),
+            DateOnly.FromDateTime(_to.Value))).ToList();
+        _loading = false;
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Employee,Project,Entries,Hours");
+        foreach (var r in _rows)
+        {
+            sb.AppendLine(string.Join(',',
+                Quote(r.Employee), Quote(r.Project), r.EntryCount,
+                r.Hours.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        var fileName = $"timelogger-summary-{_from:yyyyMMdd}-{_to:yyyyMMdd}.csv";
+        await JS.InvokeVoidAsync("timeLoggerDownloadFile", fileName, "text/csv;charset=utf-8", sb.ToString());
+    }
+
+    private static string Quote(string value) =>
+        value.Contains(',') || value.Contains('"')
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
+}
