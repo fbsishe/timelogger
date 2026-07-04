@@ -224,6 +224,8 @@ public class ApplyMappingsServiceTests : IDisposable
 
         _engineMock.Setup(e => e.Matches(It.Is<MappingRule>(r => r.Id == rule.Id), matchEntry)).Returns(true);
         _engineMock.Setup(e => e.Matches(It.Is<MappingRule>(r => r.Id == rule.Id), noMatchEntry)).Returns(false);
+        _engineMock.Setup(e => e.SelectTask(It.Is<MappingRule>(r => r.Id == rule.Id), It.IsAny<ImportedEntry>()))
+            .Returns(task);
 
         var count = await _sut.ApplyRuleAsync(rule.Id);
 

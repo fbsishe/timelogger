@@ -4,8 +4,11 @@ using TimeLogger.Domain.Entities;
 
 namespace TimeLogger.Application.Mapping;
 
-public sealed class MappingEngine : IMappingEngine
+public sealed class MappingEngine(string overtimeAttributeKey = MappingEngine.DefaultOvertimeAttributeKey) : IMappingEngine
 {
+    /// <summary>Metadata key of the Tempo "Overtime" checkbox work attribute.</summary>
+    public const string DefaultOvertimeAttributeKey = "attr__Overtime_";
+
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     public MappingResult Evaluate(IEnumerable<MappingRule> rules, ImportedEntry entry)
@@ -21,10 +24,28 @@ public sealed class MappingEngine : IMappingEngine
             }
 
             if (Matches(rule, entry))
-                return MappingResult.Matched(rule, rule.TimelogProject, rule.TimelogTask);
+                return MappingResult.Matched(rule, rule.TimelogProject, SelectTask(rule, entry));
         }
 
         return MappingResult.Unmatched();
+    }
+
+    public TimelogTask? SelectTask(MappingRule rule, ImportedEntry entry)
+    {
+        if (rule.OvertimeTimelogTask is not null && IsOvertime(entry))
+            return rule.OvertimeTimelogTask;
+        return rule.TimelogTask;
+    }
+
+    private bool IsOvertime(ImportedEntry entry)
+    {
+        var value = ResolveMetadataField(overtimeAttributeKey, entry.MetadataJson);
+        if (value is null)
+            return false;
+
+        return bool.TryParse(value, out var flag)
+            ? flag
+            : value is "1" || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
     public bool Matches(MappingRule rule, ImportedEntry entry)

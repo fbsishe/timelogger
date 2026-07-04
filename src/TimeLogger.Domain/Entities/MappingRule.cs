@@ -17,6 +17,13 @@ public class MappingRule
     public int? TimelogTaskId { get; set; }
     public TimelogTask? TimelogTask { get; set; }
 
+    /// <summary>
+    /// Optional task used instead of <see cref="TimelogTask"/> when the entry is
+    /// flagged as overtime (Tempo "Overtime" work attribute).
+    /// </summary>
+    public int? OvertimeTimelogTaskId { get; set; }
+    public TimelogTask? OvertimeTimelogTask { get; set; }
+
     /// <summary>Lower numbers are evaluated first.</summary>
     public int Priority { get; set; }
 

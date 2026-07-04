@@ -63,7 +63,8 @@ public static class DependencyInjection
         services.AddScoped<ITimelogSyncService, TimelogSyncService>();
         services.AddScoped<ITimelogSubmissionService, TimelogSubmissionService>();
         services.AddScoped<ITempoImportService, TempoImportService>();
-        services.AddSingleton<IMappingEngine, MappingEngine>();
+        services.AddSingleton<IMappingEngine>(_ => new MappingEngine(
+            configuration["Mapping:OvertimeAttributeKey"] ?? MappingEngine.DefaultOvertimeAttributeKey));
         services.AddScoped<IApplyMappingsService, ApplyMappingsService>();
         services.Configure<MappingSuggestionOptions>(configuration.GetSection(MappingSuggestionOptions.SectionName));
         services.AddScoped<IMappingSuggestionService, MappingSuggestionService>();

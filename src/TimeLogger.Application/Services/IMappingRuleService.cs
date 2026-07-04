@@ -15,6 +15,8 @@ public record MappingRuleDto(
     bool IsProjectActive,
     int? TimelogTaskId,
     string? TimelogTaskName,
+    int? OvertimeTimelogTaskId,
+    string? OvertimeTimelogTaskName,
     int Priority,
     bool IsEnabled,
     bool IncludeIssueKeyInComment);
@@ -25,6 +27,7 @@ public record CreateMappingRuleRequest(
     IReadOnlyList<MappingRuleConditionDto> Conditions,
     int TimelogProjectId,
     int? TimelogTaskId,
+    int? OvertimeTimelogTaskId,
     int Priority,
     bool IncludeIssueKeyInComment);
 

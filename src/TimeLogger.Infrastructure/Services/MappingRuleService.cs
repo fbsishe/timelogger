@@ -14,6 +14,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         var rules = await db.MappingRules
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.OvertimeTimelogTask)
             .Include(r => r.Conditions)
             .OrderBy(r => r.Priority)
             .ToListAsync(ct);
@@ -23,6 +24,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
             r.Conditions.Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue)).ToList().AsReadOnly(),
             r.TimelogProjectId, r.TimelogProject.Name, r.TimelogProject.IsActive,
             r.TimelogTaskId, r.TimelogTask?.Name,
+            r.OvertimeTimelogTaskId, r.OvertimeTimelogTask?.Name,
             r.Priority, r.IsEnabled, r.IncludeIssueKeyInComment))
             .ToList()
             .AsReadOnly();
@@ -36,6 +38,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
             SourceType = req.SourceType,
             TimelogProjectId = req.TimelogProjectId,
             TimelogTaskId = req.TimelogTaskId,
+            OvertimeTimelogTaskId = req.OvertimeTimelogTaskId,
             Priority = req.Priority,
             IsEnabled = true,
             IncludeIssueKeyInComment = req.IncludeIssueKeyInComment,
@@ -62,6 +65,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         rule.SourceType = req.SourceType;
         rule.TimelogProjectId = req.TimelogProjectId;
         rule.TimelogTaskId = req.TimelogTaskId;
+        rule.OvertimeTimelogTaskId = req.OvertimeTimelogTaskId;
         rule.Priority = req.Priority;
         rule.IncludeIssueKeyInComment = req.IncludeIssueKeyInComment;
 

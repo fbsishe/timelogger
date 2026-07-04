@@ -16,4 +16,10 @@ public interface IMappingEngine
     /// Used for 'Test Rule' previews.
     /// </summary>
     bool Matches(MappingRule rule, ImportedEntry entry);
+
+    /// <summary>
+    /// Picks the task a matched rule assigns to <paramref name="entry"/>: the rule's
+    /// overtime task when the entry carries the overtime work attribute, otherwise the regular task.
+    /// </summary>
+    TimelogTask? SelectTask(MappingRule rule, ImportedEntry entry);
 }

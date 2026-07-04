@@ -130,6 +130,14 @@ else
                 {
                     <MudText Inline="true" Typo="Typo.caption"> / @context.TimelogTaskName</MudText>
                 }
+                @if (context.OvertimeTimelogTaskName is not null)
+                {
+                    <MudTooltip Text="Entries flagged as overtime map to this task instead">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Class="ml-1">
+                            OT: @context.OvertimeTimelogTaskName
+                        </MudChip>
+                    </MudTooltip>
+                }
                 @if (context.IncludeIssueKeyInComment)
                 {
                     <MudTooltip Text="Issue key prepended to comment">
@@ -258,7 +266,18 @@ else
                 <MudSelectItem T="int" Value="@p.Id">@p.Name</MudSelectItem>
             }
         </MudSelect>
-        <MudSelect T="int?" Label="Task (optional)" @bind-Value="_form.TimelogTaskId"
+        <MudSelect T="int?" Label="Task (optional)"
+                   Value="_form.TimelogTaskId"
+                   ValueChanged="OnTaskChanged"
+                   AnchorOrigin="Origin.BottomLeft" Class="mb-3">
+            <MudSelectItem T="int?" Value="@((int?)null)">— none —</MudSelectItem>
+            @foreach (var t in _tasks)
+            {
+                <MudSelectItem T="int?" Value="@t.Id">@t.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="int?" Label="Overtime task (optional)" @bind-Value="_form.OvertimeTimelogTaskId"
+                   HelperText="Used instead of the task above when the Tempo entry has the Overtime attribute set"
                    AnchorOrigin="Origin.BottomLeft" Class="mb-3">
             <MudSelectItem T="int?" Value="@((int?)null)">— none —</MudSelectItem>
             @foreach (var t in _tasks)
@@ -347,6 +366,7 @@ else
                 .ToList(),
             TimelogProjectId = rule.TimelogProjectId,
             TimelogTaskId = rule.TimelogTaskId,
+            OvertimeTimelogTaskId = rule.OvertimeTimelogTaskId,
             Priority = _rules.Count > 0 ? _rules.Max(r => r.Priority) + 1 : 1,
             IncludeIssueKeyInComment = rule.IncludeIssueKeyInComment,
         };
@@ -366,7 +386,7 @@ else
         _dialogOpen = true;
     }
 
-    private void OpenEditDialog(MappingRuleDto rule)
+    private async Task OpenEditDialog(MappingRuleDto rule)
     {
         _editingId = rule.Id;
         _isCloning = false;
@@ -385,10 +405,13 @@ else
                 .ToList(),
             TimelogProjectId = rule.TimelogProjectId,
             TimelogTaskId = rule.TimelogTaskId,
+            OvertimeTimelogTaskId = rule.OvertimeTimelogTaskId,
             Priority = rule.Priority,
             IncludeIssueKeyInComment = rule.IncludeIssueKeyInComment,
         };
-        _tasks = [];
+        _tasks = rule.TimelogProjectId != 0
+            ? (await TimelogDataService.GetTasksByProjectAsync(rule.TimelogProjectId)).ToList()
+            : [];
         _dialogOpen = true;
     }
 
@@ -409,6 +432,7 @@ else
                 .AsReadOnly(),
             _form.TimelogProjectId,
             _form.TimelogTaskId,
+            _form.OvertimeTimelogTaskId,
             _form.Priority,
             _form.IncludeIssueKeyInComment);
 
@@ -451,7 +475,25 @@ else
     {
         _form.TimelogProjectId = projectId;
         _form.TimelogTaskId = null;
+        _form.OvertimeTimelogTaskId = null;
         _tasks = (await TimelogDataService.GetTasksByProjectAsync(projectId)).ToList();
+    }
+
+    private void OnTaskChanged(int? taskId)
+    {
+        _form.TimelogTaskId = taskId;
+
+        // Convention: preselect the "<task> (overtime)" variant if the project has one
+        if (taskId.HasValue && _form.OvertimeTimelogTaskId is null)
+        {
+            var taskName = _tasks.FirstOrDefault(t => t.Id == taskId.Value)?.Name;
+            if (taskName is not null)
+            {
+                var overtimeTask = _tasks.FirstOrDefault(t =>
+                    string.Equals(t.Name.Trim(), $"{taskName.Trim()} (overtime)", StringComparison.OrdinalIgnoreCase));
+                _form.OvertimeTimelogTaskId = overtimeTask?.Id;
+            }
+        }
     }
 
     private async Task SetEnabledAsync(int id, bool enabled)
@@ -487,6 +529,7 @@ else
         public List<ConditionFormModel> Conditions { get; set; } = [new()];
         public int TimelogProjectId { get; set; }
         public int? TimelogTaskId { get; set; }
+        public int? OvertimeTimelogTaskId { get; set; }
         public int Priority { get; set; } = 1;
         public bool IncludeIssueKeyInComment { get; set; }
     }

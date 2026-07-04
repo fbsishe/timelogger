@@ -105,6 +105,7 @@ public class ApplyMappingsService(
         var rule = await db.MappingRules
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.OvertimeTimelogTask)
             .Include(r => r.Conditions)
             .FirstOrDefaultAsync(r => r.Id == ruleId, cancellationToken)
             ?? throw new InvalidOperationException($"MappingRule {ruleId} not found.");
@@ -120,7 +121,7 @@ public class ApplyMappingsService(
             entry.Status = ImportStatus.Mapped;
             entry.MappingRuleId = rule.Id;
             entry.TimelogProjectId = rule.TimelogProject.Id;
-            entry.TimelogTaskId = rule.TimelogTask?.Id;
+            entry.TimelogTaskId = engine.SelectTask(rule, entry)?.Id;
             mapped++;
         }
 
@@ -136,6 +137,7 @@ public class ApplyMappingsService(
             .Where(r => r.IsEnabled)
             .Include(r => r.TimelogProject)
             .Include(r => r.TimelogTask)
+            .Include(r => r.OvertimeTimelogTask)
             .Include(r => r.Conditions)
             .OrderBy(r => r.Priority)
             .ToListAsync(cancellationToken);

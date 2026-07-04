@@ -504,4 +504,76 @@ public class MappingEngineTests
         Assert.Null(result.Task);
         Assert.Null(result.MatchedRule);
     }
+
+    // ------------------------------------------------------------------
+    // Overtime task selection
+    // ------------------------------------------------------------------
+
+    private static MappingRule MakeOvertimeRule()
+    {
+        var rule = MakeRule("ProjectKey", MatchOperator.Equals, "PROJ");
+        rule.TimelogTaskId = 10;
+        rule.TimelogTask = MakeTask(10);
+        rule.OvertimeTimelogTaskId = 11;
+        rule.OvertimeTimelogTask = MakeTask(11);
+        return rule;
+    }
+
+    [Theory]
+    [InlineData("""{"attr__Overtime_":"true"}""")]
+    [InlineData("""{"attr__Overtime_":"True"}""")]
+    [InlineData("""{"attr__Overtime_":"1"}""")]
+    [InlineData("""{"attr__Overtime_":"yes"}""")]
+    public void Evaluate_OvertimeEntry_SelectsOvertimeTask(string metadataJson)
+    {
+        var rule = MakeOvertimeRule();
+        var entry = MakeEntry(metadataJson: metadataJson);
+
+        var result = _engine.Evaluate([rule], entry);
+
+        Assert.True(result.IsMatched);
+        Assert.Equal(11, result.Task!.Id);
+    }
+
+    [Theory]
+    [InlineData("""{"attr__Overtime_":"false"}""")]
+    [InlineData("""{"attr__Overtime_":null}""")]
+    [InlineData("""{"billableSeconds":3600}""")]
+    [InlineData(null)]
+    public void Evaluate_NonOvertimeEntry_SelectsRegularTask(string? metadataJson)
+    {
+        var rule = MakeOvertimeRule();
+        var entry = MakeEntry(metadataJson: metadataJson);
+
+        var result = _engine.Evaluate([rule], entry);
+
+        Assert.True(result.IsMatched);
+        Assert.Equal(10, result.Task!.Id);
+    }
+
+    [Fact]
+    public void Evaluate_OvertimeEntry_WithoutOvertimeTask_FallsBackToRegularTask()
+    {
+        var rule = MakeOvertimeRule();
+        rule.OvertimeTimelogTaskId = null;
+        rule.OvertimeTimelogTask = null;
+        var entry = MakeEntry(metadataJson: """{"attr__Overtime_":"true"}""");
+
+        var result = _engine.Evaluate([rule], entry);
+
+        Assert.True(result.IsMatched);
+        Assert.Equal(10, result.Task!.Id);
+    }
+
+    [Fact]
+    public void SelectTask_UsesConfiguredOvertimeAttributeKey()
+    {
+        var engine = new MappingEngine("attr__CustomOT_");
+        var rule = MakeOvertimeRule();
+        var entry = MakeEntry(metadataJson: """{"attr__CustomOT_":"true"}""");
+
+        var task = engine.SelectTask(rule, entry);
+
+        Assert.Equal(11, task!.Id);
+    }
 }

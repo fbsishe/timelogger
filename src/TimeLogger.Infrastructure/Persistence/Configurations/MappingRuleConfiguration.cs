@@ -25,5 +25,12 @@ public class MappingRuleConfiguration : IEntityTypeConfiguration<MappingRule>
             .WithMany(x => x.MappingRules)
             .HasForeignKey(x => x.TimelogTaskId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // NoAction: a second SET NULL FK to TimelogTask would trip SQL Server's
+        // multiple-cascade-paths restriction
+        builder.HasOne(x => x.OvertimeTimelogTask)
+            .WithMany()
+            .HasForeignKey(x => x.OvertimeTimelogTaskId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }
