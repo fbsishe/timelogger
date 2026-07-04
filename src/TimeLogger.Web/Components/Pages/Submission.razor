@@ -417,6 +417,49 @@ else
     }
 }
 
+@* Submission preview (dry-run) dialog *@
+<MudDialog @bind-Visible="_previewOpen" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Preview" Class="mr-2" Style="vertical-align:middle" />
+            Review before submitting
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            The following will be sent to Timelog. Nothing is submitted until you confirm.
+        </MudText>
+        <MudTable Items="_previewByEmployee" Dense="true" Elevation="0" Class="mb-2">
+            <HeaderContent>
+                <MudTh>Employee</MudTh>
+                <MudTh Style="text-align:right">Entries</MudTh>
+                <MudTh Style="text-align:right">Hours</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Employee</MudTd>
+                <MudTd Style="text-align:right">@context.EntryCount</MudTd>
+                <MudTd Style="text-align:right">@context.Hours.ToString("0.##")</MudTd>
+            </RowTemplate>
+        </MudTable>
+        <MudDivider Class="mb-2" />
+        <MudStack Row="true" Justify="Justify.SpaceBetween" Class="px-4">
+            <MudText Typo="Typo.subtitle2">Total</MudText>
+            <MudText Typo="Typo.subtitle2">
+                @_previewEntries.Count entr@(_previewEntries.Count == 1 ? "y" : "ies") · @_previewEntries.Sum(e => e.Hours).ToString("0.##") h
+            </MudText>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _previewOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Send"
+                   Disabled="@_submitting"
+                   OnClick="ConfirmSubmitAsync">
+            @(_submitting ? "Submitting…" : "Confirm & Submit")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
 @code {
     [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = null!;
 
@@ -438,6 +481,11 @@ else
     private IReadOnlyList<EmployeeSummary> _employees = [];
     private string? _myAccountId;
     private IReadOnlyCollection<SubmissionStatus> _historyStatusFilter = [];
+
+    private bool _previewOpen;
+    private bool _previewSubmitAll;
+    private List<ReadyEntryItem> _previewEntries = [];
+    private List<PreviewRow> _previewByEmployee = [];
 
     private IEnumerable<SubmissionHistoryItem> FilteredHistory =>
         !_historyStatusFilter.Any()
@@ -506,18 +554,38 @@ else
         await LoadAsync();
     }
 
-    private async Task SubmitSelectedAsync()
+    private void SubmitSelectedAsync()
     {
         if (!_selectedEntries.Any()) return;
+        OpenPreview(_selectedEntries.ToList(), submitAll: false);
+    }
 
-        var confirmed = await DialogService.ShowMessageBox(
-            "Submit Selected",
-            $"Submit {_selectedEntries.Count} selected entr{(_selectedEntries.Count == 1 ? "y" : "ies")} to Timelog?",
-            yesText: "Submit", cancelText: "Cancel");
-        if (confirmed != true) return;
+    private void OpenPreview(List<ReadyEntryItem> entries, bool submitAll)
+    {
+        _previewEntries = entries;
+        _previewSubmitAll = submitAll;
+        _previewByEmployee = entries
+            .GroupBy(e => e.UserDisplay ?? "(unmapped employee)")
+            .Select(g => new PreviewRow(g.Key, g.Count(), g.Sum(e => e.Hours)))
+            .OrderByDescending(r => r.Hours)
+            .ToList();
+        _previewOpen = true;
+    }
 
+    private async Task ConfirmSubmitAsync()
+    {
         _submitting = true;
-        var ids = _selectedEntries.Select(e => e.Id).ToList();
+
+        if (_previewSubmitAll)
+        {
+            await SubmissionService.TriggerSubmitAllAsync();
+            Snackbar.Add("Submission job enqueued. Refresh in a moment.", Severity.Success);
+            _submitting = false;
+            _previewOpen = false;
+            return;
+        }
+
+        var ids = _previewEntries.Select(e => e.Id).ToList();
         var result = await SubmissionService.SubmitSelectedAsync(ids);
 
         var parts = new List<string>();
@@ -533,6 +601,7 @@ else
         Snackbar.Add(string.Join(", ", parts) + ".", severity);
 
         _submitting = false;
+        _previewOpen = false;
         await LoadAsync();
     }
 
@@ -603,17 +672,11 @@ else
         await LoadAsync();
     }
 
-    private async Task SubmitAllAsync()
+    private void SubmitAllAsync()
     {
-        var confirmed = await DialogService.ShowMessageBox(
-            "Submit All",
-            $"Submit all {_readyEntries.Count} ready entries to Timelog?",
-            yesText: "Submit All", cancelText: "Cancel");
-        if (confirmed != true) return;
-
-        _submitting = true;
-        await SubmissionService.TriggerSubmitAllAsync();
-        Snackbar.Add("Submission job enqueued. Refresh in a moment.", Severity.Success);
-        _submitting = false;
+        if (_readyEntries.Count == 0) return;
+        OpenPreview(_readyEntries.ToList(), submitAll: true);
     }
+
+    private record PreviewRow(string Employee, int EntryCount, double Hours);
 }
