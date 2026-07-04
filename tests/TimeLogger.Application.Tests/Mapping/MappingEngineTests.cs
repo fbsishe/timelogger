@@ -506,6 +506,47 @@ public class MappingEngineTests
     }
 
     // ------------------------------------------------------------------
+    // Condition combinators (AND / OR)
+    // ------------------------------------------------------------------
+
+    private static MappingRule MakeTwoConditionRule(ConditionCombinator combinator) =>
+        new()
+        {
+            Id = 1,
+            Name = "Combo Rule",
+            Combinator = combinator,
+            Conditions =
+            [
+                new MappingRuleCondition { MatchField = "ProjectKey", MatchOperator = MatchOperator.Equals, MatchValue = "PROJ" },
+                new MappingRuleCondition { MatchField = "Description", MatchOperator = MatchOperator.Contains, MatchValue = "standup" },
+            ],
+            Priority = 1,
+            TimelogProjectId = 1,
+            TimelogProject = MakeProject(),
+            IsEnabled = true,
+        };
+
+    [Fact]
+    public void And_RequiresAllConditions()
+    {
+        var rule = MakeTwoConditionRule(ConditionCombinator.And);
+
+        Assert.True(_engine.Matches(rule, MakeEntry(projectKey: "PROJ", description: "Daily standup")));
+        Assert.False(_engine.Matches(rule, MakeEntry(projectKey: "PROJ", description: "Coding")));
+        Assert.False(_engine.Matches(rule, MakeEntry(projectKey: "OTHER", description: "Daily standup")));
+    }
+
+    [Fact]
+    public void Or_MatchesWhenAnyConditionMatches()
+    {
+        var rule = MakeTwoConditionRule(ConditionCombinator.Or);
+
+        Assert.True(_engine.Matches(rule, MakeEntry(projectKey: "PROJ", description: "Coding")));
+        Assert.True(_engine.Matches(rule, MakeEntry(projectKey: "OTHER", description: "Daily standup")));
+        Assert.False(_engine.Matches(rule, MakeEntry(projectKey: "OTHER", description: "Coding")));
+    }
+
+    // ------------------------------------------------------------------
     // Overtime task selection
     // ------------------------------------------------------------------
 

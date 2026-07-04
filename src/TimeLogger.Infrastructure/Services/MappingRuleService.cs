@@ -22,6 +22,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         return rules.Select(r => new MappingRuleDto(
             r.Id, r.Name, r.SourceType,
             r.Conditions.Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue)).ToList().AsReadOnly(),
+            r.Combinator,
             r.TimelogProjectId, r.TimelogProject.Name, r.TimelogProject.IsActive,
             r.TimelogTaskId, r.TimelogTask?.Name,
             r.OvertimeTimelogTaskId, r.OvertimeTimelogTask?.Name,
@@ -36,6 +37,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
         {
             Name = req.Name,
             SourceType = req.SourceType,
+            Combinator = req.Combinator,
             TimelogProjectId = req.TimelogProjectId,
             TimelogTaskId = req.TimelogTaskId,
             OvertimeTimelogTaskId = req.OvertimeTimelogTaskId,
@@ -63,6 +65,7 @@ public class MappingRuleService(AppDbContext db, IMappingEngine engine) : IMappi
 
         rule.Name = req.Name;
         rule.SourceType = req.SourceType;
+        rule.Combinator = req.Combinator;
         rule.TimelogProjectId = req.TimelogProjectId;
         rule.TimelogTaskId = req.TimelogTaskId;
         rule.OvertimeTimelogTaskId = req.OvertimeTimelogTaskId;

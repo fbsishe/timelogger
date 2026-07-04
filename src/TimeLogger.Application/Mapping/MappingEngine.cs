@@ -51,7 +51,9 @@ public sealed class MappingEngine(string overtimeAttributeKey = MappingEngine.De
     public bool Matches(MappingRule rule, ImportedEntry entry)
     {
         if (!rule.Conditions.Any()) return false;
-        return rule.Conditions.All(c => MatchesCondition(c, entry));
+        return rule.Combinator == Domain.ConditionCombinator.Or
+            ? rule.Conditions.Any(c => MatchesCondition(c, entry))
+            : rule.Conditions.All(c => MatchesCondition(c, entry));
     }
 
     private static bool MatchesCondition(MappingRuleCondition c, ImportedEntry entry)

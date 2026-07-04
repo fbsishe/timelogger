@@ -40,4 +40,11 @@ public enum MatchOperator
     Regex = 4,
 }
 
+/// <summary>How a rule combines its conditions: all must match, or any one suffices.</summary>
+public enum ConditionCombinator
+{
+    And = 1,
+    Or = 2,
+}
+
 public enum AppRole { User = 0, Manager = 1, Admin = 2 }

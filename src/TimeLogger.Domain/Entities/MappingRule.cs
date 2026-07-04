@@ -10,6 +10,9 @@ public class MappingRule
 
     public ICollection<MappingRuleCondition> Conditions { get; set; } = [];
 
+    /// <summary>How <see cref="Conditions"/> are combined during evaluation.</summary>
+    public ConditionCombinator Combinator { get; set; } = ConditionCombinator.And;
+
     public int TimelogProjectId { get; set; }
     public TimelogProject TimelogProject { get; set; } = null!;
 

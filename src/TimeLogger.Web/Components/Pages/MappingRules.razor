@@ -108,7 +108,9 @@ else
                     var cond = context.Conditions[i];
                     if (i > 0)
                     {
-                        <MudText Typo="Typo.caption" Class="d-block" Style="color: var(--mud-palette-text-secondary)">AND</MudText>
+                        <MudText Typo="Typo.caption" Class="d-block" Style="color: var(--mud-palette-text-secondary)">
+                            @(context.Combinator == TimeLogger.Domain.ConditionCombinator.Or ? "OR" : "AND")
+                        </MudText>
                     }
                     <span>
                         <MudChip T="string" Size="Size.Small" Color="Color.Default">@cond.MatchField</MudChip>
@@ -218,7 +220,17 @@ else
             <MudSelectItem T="TimeLogger.Domain.SourceType?" Value="@TimeLogger.Domain.SourceType.FileUpload">FileUpload</MudSelectItem>
         </MudSelect>
 
-        <MudText Typo="Typo.subtitle2" Class="mb-2">Conditions (all must match)</MudText>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+            <MudText Typo="Typo.subtitle2">
+                Conditions (@(_form.Combinator == TimeLogger.Domain.ConditionCombinator.Or ? "any may match" : "all must match"))
+            </MudText>
+            <MudSelect T="TimeLogger.Domain.ConditionCombinator" Label="Combine with"
+                       @bind-Value="_form.Combinator" Dense="true" Margin="Margin.Dense"
+                       Style="max-width:140px" AnchorOrigin="Origin.BottomLeft">
+                <MudSelectItem T="TimeLogger.Domain.ConditionCombinator" Value="TimeLogger.Domain.ConditionCombinator.And">AND</MudSelectItem>
+                <MudSelectItem T="TimeLogger.Domain.ConditionCombinator" Value="TimeLogger.Domain.ConditionCombinator.Or">OR</MudSelectItem>
+            </MudSelect>
+        </MudStack>
         @foreach (var cond in _form.Conditions)
         {
             var localCond = cond;
@@ -356,6 +368,7 @@ else
         {
             Name = $"{rule.Name} (copy)",
             SourceType = rule.SourceType,
+            Combinator = rule.Combinator,
             Conditions = rule.Conditions
                 .Select(c => new ConditionFormModel
                 {
@@ -395,6 +408,7 @@ else
         {
             Name = rule.Name,
             SourceType = rule.SourceType,
+            Combinator = rule.Combinator,
             Conditions = rule.Conditions
                 .Select(c => new ConditionFormModel
                 {
@@ -430,6 +444,7 @@ else
                 .Select(c => new MappingRuleConditionDto(c.MatchField, c.MatchOperator, c.MatchValue))
                 .ToList()
                 .AsReadOnly(),
+            _form.Combinator,
             _form.TimelogProjectId,
             _form.TimelogTaskId,
             _form.OvertimeTimelogTaskId,
@@ -527,6 +542,7 @@ else
         public string Name { get; set; } = "";
         public TimeLogger.Domain.SourceType? SourceType { get; set; }
         public List<ConditionFormModel> Conditions { get; set; } = [new()];
+        public TimeLogger.Domain.ConditionCombinator Combinator { get; set; } = TimeLogger.Domain.ConditionCombinator.And;
         public int TimelogProjectId { get; set; }
         public int? TimelogTaskId { get; set; }
         public int? OvertimeTimelogTaskId { get; set; }
