@@ -148,6 +148,8 @@ ipch/
 
 # Visual Studio Trace Files
 *.e2e
+# ...but the Playwright E2E test project is not a trace file
+!tests/TimeLogger.E2E/
 
 # TFS 2012 Local Workspace
 $tf/
