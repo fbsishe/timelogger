@@ -3,10 +3,12 @@
 @attribute [Authorize(Policy = "AnyUser")]
 @using System.Text.Json
 @using System.Text.Json.Nodes
+@using System.Text
 @inject IEntryService EntryService
 @inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
 @inject IAppUserService AppUserService
+@inject IJSRuntime JS
 
 <PageTitle>Entries – TimeLogger</PageTitle>
 
@@ -25,6 +27,12 @@
         <MudChip T="string" Value="@("Ignored")" Color="Color.Default">Ignored</MudChip>
     </MudChipSet>
     <MudSpacer />
+    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.Download"
+               Disabled="@(_loading || !FilteredEntries.Any())"
+               OnClick="ExportCsvAsync">
+        Export CSV
+    </MudButton>
     <MudText Typo="Typo.body2" Color="Color.Secondary">@_totalCount total entries</MudText>
 </MudStack>
 
@@ -157,6 +165,13 @@ else
     {
         _accountIdFilter = await ResolveAccountIdFilterAsync();
         await LoadAsync();
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var csv = EntryCsvExporter.ToCsv(FilteredEntries);
+        var fileName = $"timelogger-entries-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+        await JS.InvokeVoidAsync("timeLoggerDownloadFile", fileName, "text/csv;charset=utf-8", csv);
     }
 
     protected override async Task OnParametersSetAsync() => await LoadAsync();
