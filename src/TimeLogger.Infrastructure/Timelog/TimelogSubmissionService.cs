@@ -1,5 +1,7 @@
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TimeLogger.Application.Interfaces;
 using TimeLogger.Domain;
 using TimeLogger.Domain.Entities;
@@ -11,6 +13,7 @@ namespace TimeLogger.Infrastructure.Timelog;
 public class TimelogSubmissionService(
     ITimelogApiClient apiClient,
     AppDbContext db,
+    IOptions<TimelogOptions> options,
     ILogger<TimelogSubmissionService> logger) : ITimelogSubmissionService
 {
     public async Task<SubmitOutcome> SubmitAsync(ImportedEntry entry, CancellationToken cancellationToken = default)
@@ -158,59 +161,84 @@ public class TimelogSubmissionService(
             UserId = employeeMapping?.TimelogUserId,
         };
 
-        var attemptCount = (existingSubmission?.AttemptCount ?? 0) + 1;
+        // Transient errors (network, 5xx, 429) are retried with exponential backoff.
+        // The client-generated GUID keeps retried POSTs idempotent on the Timelog side.
+        var maxAttempts = Math.Max(1, options.Value.SubmitRetryCount);
+        var baseDelay = TimeSpan.FromSeconds(Math.Max(0, options.Value.SubmitRetryBaseDelaySeconds));
 
-        SubmitOutcome outcome;
+        var priorAttempts = existingSubmission?.AttemptCount ?? 0;
+        SubmitOutcome outcome = SubmitOutcome.Failed;
 
-        try
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var response = await apiClient.CreateTimeRegistrationAsync(model, cancellationToken);
+            var attemptCount = priorAttempts + attempt;
+            var isLastAttempt = attempt == maxAttempts;
 
-            if (response.IsSuccessStatusCode)
+            string? failureMessage;
+            bool isTransient;
+
+            try
             {
-                logger.LogInformation("Submitted entry {EntryId} to Timelog (task {TaskExternalId}, clientId {ClientId})",
-                    entry.Id, task.ExternalId, clientId);
+                var response = await apiClient.CreateTimeRegistrationAsync(model, cancellationToken);
 
-                entry.Status = ImportStatus.Submitted;
-                outcome = SubmitOutcome.Succeeded;
-
-                if (existingSubmission is null)
+                if (response.IsSuccessStatusCode)
                 {
-                    db.SubmittedEntries.Add(new SubmittedEntry
+                    logger.LogInformation("Submitted entry {EntryId} to Timelog (task {TaskExternalId}, clientId {ClientId})",
+                        entry.Id, task.ExternalId, clientId);
+
+                    entry.Status = ImportStatus.Submitted;
+                    outcome = SubmitOutcome.Succeeded;
+
+                    if (existingSubmission is null)
                     {
-                        ImportedEntryId = entry.Id,
-                        ExternalId = clientId.ToString(),
-                        Status = SubmissionStatus.Success,
-                        SubmittedAt = DateTimeOffset.UtcNow,
-                        AttemptCount = attemptCount,
-                    });
-                }
-                else
-                {
-                    existingSubmission.ExternalId = clientId.ToString();
-                    existingSubmission.Status = SubmissionStatus.Success;
-                    existingSubmission.SubmittedAt = DateTimeOffset.UtcNow;
-                    existingSubmission.AttemptCount = attemptCount;
-                    existingSubmission.ErrorMessage = null;
-                }
-            }
-            else
-            {
-                var error = response.Error?.Content ?? response.Error?.Message;
-                logger.LogWarning("Timelog rejected entry {EntryId}: {StatusCode} — {Error}",
-                    entry.Id, response.StatusCode, error);
+                        db.SubmittedEntries.Add(new SubmittedEntry
+                        {
+                            ImportedEntryId = entry.Id,
+                            ExternalId = clientId.ToString(),
+                            Status = SubmissionStatus.Success,
+                            SubmittedAt = DateTimeOffset.UtcNow,
+                            AttemptCount = attemptCount,
+                        });
+                    }
+                    else
+                    {
+                        existingSubmission.ExternalId = clientId.ToString();
+                        existingSubmission.Status = SubmissionStatus.Success;
+                        existingSubmission.SubmittedAt = DateTimeOffset.UtcNow;
+                        existingSubmission.AttemptCount = attemptCount;
+                        existingSubmission.ErrorMessage = null;
+                    }
 
-                entry.Status = ImportStatus.Failed;
-                outcome = SubmitOutcome.Failed;
-                PersistFailure(db, existingSubmission, entry.Id, attemptCount, $"{(int)response.StatusCode}: {error}");
+                    break;
+                }
+
+                var error = response.Error?.Content ?? response.Error?.Message;
+                failureMessage = $"{(int)response.StatusCode}: {error}";
+                isTransient = response.StatusCode is >= HttpStatusCode.InternalServerError or HttpStatusCode.TooManyRequests;
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Exception submitting entry {EntryId} to Timelog", entry.Id);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failureMessage = ex.Message;
+                isTransient = true;
+            }
+
+            if (isTransient && !isLastAttempt)
+            {
+                var delay = baseDelay * Math.Pow(2, attempt - 1);
+                logger.LogWarning(
+                    "Transient error submitting entry {EntryId} (attempt {Attempt}/{Max}): {Error} — retrying in {Delay}s",
+                    entry.Id, attempt, maxAttempts, failureMessage, delay.TotalSeconds);
+                await Task.Delay(delay, cancellationToken);
+                continue;
+            }
+
+            logger.LogWarning("Timelog rejected entry {EntryId} after {Attempt} attempt(s): {Error}",
+                entry.Id, attempt, failureMessage);
+
             entry.Status = ImportStatus.Failed;
             outcome = SubmitOutcome.Failed;
-            PersistFailure(db, existingSubmission, entry.Id, attemptCount, ex.Message);
+            PersistFailure(db, existingSubmission, entry.Id, attemptCount, failureMessage);
+            break;
         }
 
         await db.SaveChangesAsync(cancellationToken);

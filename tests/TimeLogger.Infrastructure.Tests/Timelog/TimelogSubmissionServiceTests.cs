@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Refit;
 using System.Net;
+using TimeLogger.Application.Interfaces;
 using TimeLogger.Domain;
 using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure.Persistence;
@@ -24,8 +26,21 @@ public class TimelogSubmissionServiceTests : IDisposable
             .Options;
         _db = new AppDbContext(options);
         _apiClientMock = new Mock<ITimelogApiClient>();
-        _sut = new TimelogSubmissionService(_apiClientMock.Object, _db, NullLogger<TimelogSubmissionService>.Instance);
+        _sut = CreateSut();
     }
+
+    private TimelogSubmissionService CreateSut(int retryCount = 1) =>
+        new(
+            _apiClientMock.Object,
+            _db,
+            Options.Create(new TimelogOptions
+            {
+                BaseUrl = "https://timelog.test/api",
+                ApiKey = "test-key",
+                SubmitRetryCount = retryCount,
+                SubmitRetryBaseDelaySeconds = 0,
+            }),
+            NullLogger<TimelogSubmissionService>.Instance);
 
     private async Task<(ImportedEntry entry, TimelogTask task)> SeedEntryWithTaskAsync()
     {
@@ -203,6 +218,82 @@ public class TimelogSubmissionServiceTests : IDisposable
         Assert.Equal(2.0, capturedDto.Hours);
         Assert.Equal("999", capturedDto.TaskId.ToString());
         Assert.Equal("2024-01-15", capturedDto.Date);
+    }
+
+    // ------------------------------------------------------------------
+    // Retry with exponential backoff (TL-32)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task SubmitAsync_TransientException_RetriesAndSucceeds()
+    {
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        var sut = CreateSut(retryCount: 3);
+
+        var successResponse = new ApiResponse<object>(
+            new HttpResponseMessage(HttpStatusCode.OK), null, new RefitSettings());
+
+        _apiClientMock
+            .SetupSequence(c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Connection reset"))
+            .ThrowsAsync(new HttpRequestException("Connection reset"))
+            .ReturnsAsync(successResponse);
+
+        var outcome = await sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Succeeded, outcome);
+        Assert.Equal(ImportStatus.Submitted, entry.Status);
+        var audit = await _db.SubmittedEntries.SingleAsync();
+        Assert.Equal(SubmissionStatus.Success, audit.Status);
+        Assert.Equal(3, audit.AttemptCount);
+        _apiClientMock.Verify(
+            c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ServerError_RetriesUpToLimit_ThenFails()
+    {
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        var sut = CreateSut(retryCount: 3);
+
+        var serverError = new ApiResponse<object>(
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable), null, new RefitSettings());
+
+        _apiClientMock
+            .Setup(c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(serverError);
+
+        var outcome = await sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Failed, outcome);
+        Assert.Equal(ImportStatus.Failed, entry.Status);
+        var audit = await _db.SubmittedEntries.SingleAsync();
+        Assert.Equal(3, audit.AttemptCount);
+        _apiClientMock.Verify(
+            c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ClientError_DoesNotRetry()
+    {
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        var sut = CreateSut(retryCount: 3);
+
+        var validationError = new ApiResponse<object>(
+            new HttpResponseMessage(HttpStatusCode.UnprocessableEntity), null, new RefitSettings());
+
+        _apiClientMock
+            .Setup(c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(validationError);
+
+        var outcome = await sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Failed, outcome);
+        _apiClientMock.Verify(
+            c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     public void Dispose() => _db.Dispose();
