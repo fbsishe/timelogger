@@ -31,6 +31,8 @@ services:
       Tempo__BaseUrl: "${Tempo__BaseUrl}"
       Tempo__Token: "${Tempo__Token}"
       Hangfire__DashboardPassword: "${Hangfire__DashboardPassword}"
+      AutoSubmit__Enabled: "${AutoSubmit__Enabled:-false}"
+      AutoSubmit__SlackWebhookUrl: "${AutoSubmit__SlackWebhookUrl:-}"
       AzureAd__TenantId: "${AzureAd__TenantId}"
       AzureAd__ClientId: "${AzureAd__ClientId}"
       AzureAd__ClientSecret: "${AzureAd__ClientSecret}"
