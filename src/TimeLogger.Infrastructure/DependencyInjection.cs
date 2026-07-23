@@ -91,6 +91,10 @@ public static class DependencyInjection
         services.AddScoped<IJobHealthService, JobHealthService>();
         services.AddScoped<IJobFailureNotifier, JobFailureNotifier>();
 
+        // Scheduled auto-submission with Slack report
+        services.Configure<AutoSubmitOptions>(configuration.GetSection(AutoSubmitOptions.SectionName));
+        services.AddScoped<ISlackMessageSender, SlackWebhookMessageSender>();
+
         // Hangfire
         var connectionString = configuration.GetConnectionString("Default")!;
         services.AddHangfire(config => config
@@ -128,6 +132,32 @@ public static class DependencyInjection
             job => job.ExecuteAsync(CancellationToken.None),
             dailyCron);
 
-        // Submission is manual-only — no recurring job registered.
+        // Scheduled auto-submission (TL-99) — opt-in via AutoSubmit:Enabled.
+        // Manual submission from the UI stays available either way.
+        var autoSubmit = configuration.GetSection(AutoSubmitOptions.SectionName).Get<AutoSubmitOptions>()
+            ?? new AutoSubmitOptions();
+
+        if (autoSubmit.Enabled)
+        {
+            TimeZoneInfo timeZone;
+            try
+            {
+                timeZone = TimeZoneInfo.FindSystemTimeZoneById(autoSubmit.TimeZone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                timeZone = TimeZoneInfo.Utc;
+            }
+
+            RecurringJob.AddOrUpdate<AutoSubmitReportJob>(
+                AutoSubmitReportJob.JobId,
+                job => job.ExecuteAsync(CancellationToken.None),
+                autoSubmit.Cron,
+                new RecurringJobOptions { TimeZone = timeZone });
+        }
+        else
+        {
+            RecurringJob.RemoveIfExists(AutoSubmitReportJob.JobId);
+        }
     }
 }

@@ -87,6 +87,10 @@
             </MudCardHeader>
             <MudCardContent>
                 @SettingRow("Daily Pull Cron", Configuration["Hangfire:DailyPullCron"] ?? "0 0 * * *")
+                @SettingRow("Auto-Submit", Configuration.GetValue<bool>("AutoSubmit:Enabled")
+                    ? $"Enabled — {Configuration["AutoSubmit:Cron"]} ({Configuration["AutoSubmit:TimeZone"]})"
+                    : "Disabled")
+                @SettingRow("Auto-Submit Slack Webhook", Configuration["AutoSubmit:SlackWebhookUrl"], masked: true)
                 <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
                     <MudLink Href="/hangfire" Target="_blank">Open Hangfire Dashboard</MudLink>
                     to view and manage background jobs.
