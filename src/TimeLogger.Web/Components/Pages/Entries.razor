@@ -8,6 +8,8 @@
 @inject ITimelogDataService TimelogDataService
 @inject ISnackbar Snackbar
 @inject IAppUserService AppUserService
+@inject IDayReviewService DayReviewService
+@inject ISubmissionService SubmissionService
 @inject IJSRuntime JS
 
 <PageTitle>Entries – TimeLogger</PageTitle>
@@ -56,7 +58,19 @@ else
             <MudTh>Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd>@context.WorkDate.ToString("yyyy-MM-dd")</MudTd>
+            <MudTd>
+                @if (_canDayReview)
+                {
+                    <MudLink Style="cursor:pointer" Title="Compare this person's day with Timelog"
+                             OnClick="@(() => OpenDayReviewAsync(context))">
+                        @context.WorkDate.ToString("yyyy-MM-dd")
+                    </MudLink>
+                }
+                else
+                {
+                    @context.WorkDate.ToString("yyyy-MM-dd")
+                }
+            </MudTd>
             <MudTd>@context.UserEmail</MudTd>
             <MudTd>@context.SourceName</MudTd>
             <MudTd>@context.IssueKey</MudTd>
@@ -140,6 +154,234 @@ else
     </DialogActions>
 </MudDialog>
 
+@* Day review dialog — side-by-side Timelogger vs Timelog for one person and day *@
+<MudDialog @bind-Visible="_dayReviewOpen" Options="@(new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true })">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.CompareArrows" />
+            <MudText Typo="Typo.h6">
+                Day review — @(_dayReview?.UserDisplay ?? "…"), @_dayReviewDate.ToString("yyyy-MM-dd")
+            </MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        @if (_dayReviewLoading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="my-4" />
+        }
+        else if (_dayReview is not null)
+        {
+            @if (_dayReview.Warning is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@_dayReview.Warning</MudAlert>
+            }
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="4" Class="mb-3">
+                <MudText><b>@_dayReview.OurTotal h</b> in Timelogger</MudText>
+                <MudText><b>@(_dayReview.TimelogQueried ? $"{_dayReview.TimelogTotal} h" : "—")</b> in Timelog</MudText>
+                @if (_dayReview.TimelogQueried)
+                {
+                    @if (_dayReview.Groups.All(g => g.State == DayGroupState.Match))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success"
+                                 Icon="@Icons.Material.Filled.CheckCircle">Everything matches</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning"
+                                 Icon="@Icons.Material.Filled.ReportProblem">Differences found</MudChip>
+                    }
+                }
+                <MudSpacer />
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                               Title="Reload from Timelog" Disabled="@_dayReviewBusy"
+                               OnClick="LoadDayReviewAsync" />
+            </MudStack>
+
+            @if (_dayReview.Groups.Count == 0)
+            {
+                <MudText Color="Color.Secondary">No entries on either side for this day.</MudText>
+            }
+
+            @foreach (var group in _dayReview.Groups)
+            {
+                <MudPaper Outlined="true" Class="pa-3 mb-3"
+                          Style="@($"border-left:4px solid {GroupBorderColor(group.State)}")">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudText Typo="Typo.subtitle1"><b>@group.TaskName</b></MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@GroupStateColor(group.State)">
+                            @GroupStateLabel(group.State)
+                        </MudChip>
+                        <MudSpacer />
+                        @if (group.State is DayGroupState.Different)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Warning">
+                                <b>@group.OurHours h</b> here vs <b>@group.TimelogHours h</b> in Timelog
+                            </MudText>
+                        }
+                    </MudStack>
+
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.overline">In Timelogger (Tempo)</MudText>
+                            @if (group.Entries.Count == 0)
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">No entries.</MudText>
+                            }
+                            else
+                            {
+                                <MudSimpleTable Dense="true" Class="mt-1">
+                                    <thead>
+                                        <tr><th>Issue</th><th>Description</th><th style="text-align:right">Hours</th><th>Status</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var e in group.Entries)
+                                        {
+                                            <tr>
+                                                <td>@(e.IssueKey ?? "—")</td>
+                                                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@e.Description</td>
+                                                <td style="text-align:right">@e.Hours</td>
+                                                <td>
+                                                    <MudChip T="string" Size="Size.Small" Color="@StatusColor(e.Status)">@e.Status</MudChip>
+                                                </td>
+                                            </tr>
+                                        }
+                                        @if (group.Entries.Count > 1)
+                                        {
+                                            <tr>
+                                                <td></td><td style="text-align:right"><b>Total</b></td>
+                                                <td style="text-align:right"><b>@group.OurHours</b></td><td></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </MudSimpleTable>
+                            }
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.overline">In Timelog</MudText>
+                            @if (group.Registrations.Count == 0)
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                    @(_dayReview.TimelogQueried ? "No registration." : "Unknown — Timelog not queried.")
+                                </MudText>
+                            }
+                            else
+                            {
+                                <MudSimpleTable Dense="true" Class="mt-1">
+                                    <thead>
+                                        <tr><th>Comment</th><th style="text-align:right">Hours</th><th>State</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var r in group.Registrations)
+                                        {
+                                            <tr>
+                                                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@r.Comment</td>
+                                                <td style="text-align:right">@r.Hours</td>
+                                                <td>
+                                                    <MudTooltip Text="@RegistrationTooltip(r)">
+                                                        <MudStack Row="true" Spacing="1">
+                                                            <MudChip T="string" Size="Size.Small"
+                                                                     Color="@(r.IsApproved ? Color.Success : Color.Info)"
+                                                                     Icon="@(r.IsApproved ? Icons.Material.Filled.Lock : Icons.Material.Filled.LockOpen)">
+                                                                @ApprovalLabel(r.ApprovalStatus)
+                                                            </MudChip>
+                                                            @if (r.Invoiced == true)
+                                                            {
+                                                                <MudChip T="string" Size="Size.Small" Color="Color.Secondary">Invoiced</MudChip>
+                                                            }
+                                                        </MudStack>
+                                                    </MudTooltip>
+                                                </td>
+                                            </tr>
+                                        }
+                                        @if (group.Registrations.Count > 1)
+                                        {
+                                            <tr>
+                                                <td style="text-align:right"><b>Total</b></td>
+                                                <td style="text-align:right"><b>@group.TimelogHours</b></td><td></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </MudSimpleTable>
+                            }
+                        </MudItem>
+                    </MudGrid>
+
+                    @if (group.CanQuickResolve)
+                    {
+                        var entry = group.Entries[0];
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mt-3">
+                            <MudSelect T="ConflictResolution"
+                                       Value="_dayResolutions.GetValueOrDefault(entry.Id, ConflictResolution.UseOurs)"
+                                       ValueChanged="@(v => _dayResolutions[entry.Id] = v)"
+                                       Dense="true" Margin="Margin.Dense" Style="min-width:200px"
+                                       AnchorOrigin="Origin.BottomLeft">
+                                <MudSelectItem T="ConflictResolution" Value="ConflictResolution.UseOurs">
+                                    Use ours (@group.OurHours h)
+                                </MudSelectItem>
+                                <MudSelectItem T="ConflictResolution" Value="ConflictResolution.AddToExisting">
+                                    Add together (@Math.Round(group.OurHours + group.TimelogHours, 2) h)
+                                </MudSelectItem>
+                                <MudSelectItem T="ConflictResolution" Value="ConflictResolution.SetCustom">
+                                    Set custom value
+                                </MudSelectItem>
+                            </MudSelect>
+                            @if (_dayResolutions.GetValueOrDefault(entry.Id, ConflictResolution.UseOurs) == ConflictResolution.SetCustom)
+                            {
+                                <MudNumericField T="double?" Value="_dayCustomHours.GetValueOrDefault(entry.Id)"
+                                                 ValueChanged="@(v => _dayCustomHours[entry.Id] = v)"
+                                                 Min="0.01" Max="24" Step="0.5"
+                                                 Placeholder="Hours" HideSpinButtons="true"
+                                                 Dense="true" Margin="Margin.Dense" Style="width:80px" />
+                            }
+                            <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Warning"
+                                       Disabled="@_dayReviewBusy"
+                                       OnClick="@(() => ResolveDayDifferenceAsync(group))">
+                                Apply to Timelog
+                            </MudButton>
+                            @if (group.Registrations[0].IsApproved)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    Registration is approved in Timelog — the change may be rejected.
+                                </MudText>
+                            }
+                        </MudStack>
+                    }
+                    else if (group.State == DayGroupState.Different)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                            Multiple entries or registrations share this task — resolve on the Submission page or directly in Timelog.
+                        </MudText>
+                    }
+                    else if (group.State == DayGroupState.MissingInTimelog)
+                    {
+                        <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Primary" Class="mt-2"
+                                   Disabled="@_dayReviewBusy"
+                                   OnClick="@(() => SubmitDayGroupAsync(group))">
+                            Submit @(group.Entries.Count == 1 ? "entry" : $"{group.Entries.Count} entries") to Timelog
+                        </MudButton>
+                    }
+                    else if (group.State == DayGroupState.OnlyInTimelog)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                            Exists only in Timelog (manually entered or from another source) — not managed by Timelogger.
+                        </MudText>
+                    }
+                    else if (group.State == DayGroupState.Unmapped && group.ApiTaskId is null)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                            Map these entries to a Timelog task first (Map action in the entries table).
+                        </MudText>
+                    }
+                </MudPaper>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _dayReviewOpen = false)">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
 @code {
     [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = null!;
 
@@ -161,8 +403,20 @@ else
     private int? _selectedProjectId;
     private int? _selectedTaskId;
 
+    private bool _canDayReview;
+    private bool _dayReviewOpen;
+    private bool _dayReviewLoading;
+    private bool _dayReviewBusy;
+    private DayReviewResult? _dayReview;
+    private string? _dayReviewAccountId;
+    private DateOnly _dayReviewDate;
+    private readonly Dictionary<int, ConflictResolution> _dayResolutions = [];
+    private readonly Dictionary<int, double?> _dayCustomHours = [];
+
     protected override async Task OnInitializedAsync()
     {
+        var auth = await AuthState;
+        _canDayReview = auth.User.IsInRole("Admin") || auth.User.IsInRole("Manager");
         _accountIdFilter = await ResolveAccountIdFilterAsync();
         await LoadAsync();
     }
@@ -256,6 +510,122 @@ else
 
         _jsonDialogContent = JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true });
         _jsonDialogOpen = true;
+    }
+
+    private async Task OpenDayReviewAsync(EntryListItem entry)
+    {
+        _dayReviewAccountId = entry.RawUserEmail ?? entry.UserEmail;
+        if (_dayReviewAccountId is null) return;
+        _dayReviewDate = entry.WorkDate;
+        _dayReview = null;
+        _dayReviewOpen = true;
+        await LoadDayReviewAsync();
+    }
+
+    private async Task LoadDayReviewAsync()
+    {
+        if (_dayReviewAccountId is null) return;
+        _dayReviewLoading = true;
+        _dayResolutions.Clear();
+        _dayCustomHours.Clear();
+        try
+        {
+            _dayReview = await DayReviewService.GetDayReviewAsync(_dayReviewAccountId, _dayReviewDate);
+        }
+        finally
+        {
+            _dayReviewLoading = false;
+        }
+    }
+
+    private async Task ResolveDayDifferenceAsync(DayReviewGroup group)
+    {
+        var entry = group.Entries[0];
+        var registration = group.Registrations[0];
+        var resolution = _dayResolutions.GetValueOrDefault(entry.Id, ConflictResolution.UseOurs);
+        double? customHours = resolution == ConflictResolution.SetCustom
+            ? _dayCustomHours.GetValueOrDefault(entry.Id)
+            : null;
+
+        if (resolution == ConflictResolution.SetCustom && customHours is null or <= 0)
+        {
+            Snackbar.Add("Enter a custom hours value greater than 0.", Severity.Warning);
+            return;
+        }
+
+        _dayReviewBusy = true;
+        var outcome = await DayReviewService.ResolveDifferenceAsync(
+            entry.Id, registration.TimeRegistrationId, registration.Hours, resolution, customHours);
+        _dayReviewBusy = false;
+
+        if (outcome == SubmitOutcome.Succeeded)
+            Snackbar.Add($"Timelog updated for {group.TaskName}.", Severity.Success);
+        else
+            Snackbar.Add("Update failed — the entry is now marked as a conflict; see the Submission page.", Severity.Error);
+
+        await LoadDayReviewAsync();
+        await LoadAsync();
+    }
+
+    private async Task SubmitDayGroupAsync(DayReviewGroup group)
+    {
+        _dayReviewBusy = true;
+        var result = await SubmissionService.SubmitSelectedAsync(group.Entries.Select(e => e.Id).ToList());
+        _dayReviewBusy = false;
+
+        if (result.Failed == 0 && result.Skipped == 0)
+            Snackbar.Add($"Submitted {result.Succeeded + result.Duplicates} entr{(result.Total == 1 ? "y" : "ies")} to Timelog.", Severity.Success);
+        else
+            Snackbar.Add($"Submission finished: {result.Succeeded} succeeded, {result.Failed} failed, {result.Skipped} skipped, {result.Conflicts} conflicts.", Severity.Warning);
+
+        await LoadDayReviewAsync();
+        await LoadAsync();
+    }
+
+    private static string GroupStateLabel(DayGroupState state) => state switch
+    {
+        DayGroupState.Match            => "Match",
+        DayGroupState.Different        => "Differs",
+        DayGroupState.MissingInTimelog => "Missing in Timelog",
+        DayGroupState.OnlyInTimelog    => "Only in Timelog",
+        DayGroupState.Unmapped         => "Not comparable",
+        _                              => state.ToString(),
+    };
+
+    private static Color GroupStateColor(DayGroupState state) => state switch
+    {
+        DayGroupState.Match            => Color.Success,
+        DayGroupState.Different        => Color.Warning,
+        DayGroupState.MissingInTimelog => Color.Info,
+        DayGroupState.OnlyInTimelog    => Color.Secondary,
+        _                              => Color.Default,
+    };
+
+    private static string GroupBorderColor(DayGroupState state) => state switch
+    {
+        DayGroupState.Match            => "var(--mud-palette-success)",
+        DayGroupState.Different        => "var(--mud-palette-warning)",
+        DayGroupState.MissingInTimelog => "var(--mud-palette-info)",
+        DayGroupState.OnlyInTimelog    => "var(--mud-palette-secondary)",
+        _                              => "var(--mud-palette-lines-default)",
+    };
+
+    // Timelog's approval enum is undocumented; observed values 6/7 appear on approved months.
+    private static string ApprovalLabel(int? status) => status switch
+    {
+        null => "No approval info",
+        0    => "Open",
+        >= 6 => "Approved",
+        _    => $"Approval status {status}",
+    };
+
+    private static string RegistrationTooltip(DayReviewRegistration r)
+    {
+        var parts = new List<string> { $"Registration #{r.TimeRegistrationId}" };
+        if (r.ApprovalStatus is not null) parts.Add($"Approval status (raw): {r.ApprovalStatus}");
+        if (r.Created is not null) parts.Add($"Created {r.Created:yyyy-MM-dd HH:mm}");
+        if (r.LastModified is not null && r.LastModified != r.Created) parts.Add($"Modified {r.LastModified:yyyy-MM-dd HH:mm}");
+        return string.Join(" · ", parts);
     }
 
     private static Color StatusColor(string status) => status switch

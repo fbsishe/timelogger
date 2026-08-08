@@ -36,8 +36,11 @@ public interface ITimelogApiClient
         [Body] CreateTimeRegistrationDto model,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Returns all time tracking items for a given date range, including manually-entered registrations.</summary>
-    [Get("/v1/time-tracking-item/get-by-date")]
+    /// <summary>
+    /// Returns all time tracking items for a given date range, including manually-entered registrations.
+    /// The explicit $pagesize matters: without it the endpoint silently returns only the first 10 items.
+    /// </summary>
+    [Get("/v1/time-tracking-item/get-by-date?$pagesize=500")]
     Task<TafListResponse<TimeTrackingItemDto>> GetTimeTrackingItemsByDateAsync(
         [Query] string startDate,
         [Query] string endDate,
