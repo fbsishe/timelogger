@@ -73,6 +73,89 @@ public class TimelogSubmissionServiceTests : IDisposable
         return (entry, task);
     }
 
+    private void SetupApiUser(int userId) =>
+        _apiClientMock
+            .Setup(c => c.GetCurrentUserAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafEntity<TimelogUserDto> { Properties = new TimelogUserDto { UserId = userId } });
+
+    private void SetupEmptyGetByDate() =>
+        _apiClientMock
+            .Setup(c => c.GetTimeTrackingItemsByDateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafListResponse<TimeTrackingItemDto>());
+
+    /// <summary>Seeds a second entry (same task/user/date) already submitted with the given hours.</summary>
+    private async Task SeedPriorSubmissionAsync(ImportedEntry entry, double hours)
+    {
+        var prior = new ImportedEntry
+        {
+            ExternalId = "w-prior",
+            UserEmail = entry.UserEmail,
+            WorkDate = entry.WorkDate,
+            TimeSpentSeconds = (int)(hours * 3600),
+            Status = ImportStatus.Submitted,
+            ImportSourceId = entry.ImportSourceId,
+            TimelogTaskId = entry.TimelogTaskId,
+        };
+        _db.ImportedEntries.Add(prior);
+        await _db.SaveChangesAsync();
+        _db.SubmittedEntries.Add(new SubmittedEntry
+        {
+            ImportedEntryId = prior.Id,
+            ExternalId = Guid.NewGuid().ToString(),
+            Status = SubmissionStatus.Success,
+            SubmittedAt = DateTimeOffset.UtcNow,
+            AttemptCount = 1,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ApiCheckNotAuthoritativeForOtherUser_FallsBackToLocalCheck()
+    {
+        // get-by-date only returns the API key user's registrations. For an entry belonging
+        // to someone else, an empty result must NOT be trusted — the local check must run.
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        _db.EmployeeMappings.Add(new EmployeeMapping { AtlassianAccountId = entry.UserEmail, TimelogUserId = 25 });
+        await _db.SaveChangesAsync();
+
+        SetupApiUser(8);
+        SetupEmptyGetByDate();
+        await SeedPriorSubmissionAsync(entry, hours: 3.5); // entry itself is 2h
+
+        var outcome = await _sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Conflict, outcome);
+        Assert.Equal(ImportStatus.Conflict, entry.Status);
+        _apiClientMock.Verify(
+            c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ApiCheckAuthoritativeForKeyUser_EmptyResultSkipsLocalCheck()
+    {
+        // For the key user's own entries an empty get-by-date IS authoritative: even with a
+        // stale local record, the entry is POSTed (recreated) rather than flagged as conflict.
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        _db.EmployeeMappings.Add(new EmployeeMapping { AtlassianAccountId = entry.UserEmail, TimelogUserId = 8 });
+        await _db.SaveChangesAsync();
+
+        SetupApiUser(8);
+        SetupEmptyGetByDate();
+        await SeedPriorSubmissionAsync(entry, hours: 3.5);
+
+        var successResponse = new ApiResponse<object>(
+            new HttpResponseMessage(HttpStatusCode.OK), null, new RefitSettings());
+        _apiClientMock
+            .Setup(c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(successResponse);
+
+        var outcome = await _sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Succeeded, outcome);
+        Assert.Equal(ImportStatus.Submitted, entry.Status);
+    }
+
     [Fact]
     public async Task SubmitAsync_OnSuccess_MarksEntrySubmittedAndPersistsAudit()
     {

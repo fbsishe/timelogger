@@ -51,4 +51,20 @@ public interface ITimelogApiClient
     Task<IApiResponse> DeleteTimeRegistrationAsync(
         int id,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the user the API key is issued to. Relevant because get-by-date only
+    /// returns THIS user's registrations, regardless of the key's write permissions.
+    /// </summary>
+    [Get("/v1/user/me")]
+    Task<TafEntity<TimelogUserDto>> GetCurrentUserAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Weekly timesheet open/closed status. Unlike get-by-date, this works for any user.</summary>
+    [Get("/v1/timesheet-status/weekly")]
+    Task<TafListResponse<WeeklyTimesheetStatusDto>> GetWeeklyTimesheetStatusAsync(
+        [Query] string startDate,
+        [Query] string endDate,
+        [Query] int userId,
+        CancellationToken cancellationToken = default);
 }

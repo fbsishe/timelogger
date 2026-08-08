@@ -179,6 +179,16 @@ else
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="4" Class="mb-3">
                 <MudText><b>@_dayReview.OurTotal h</b> in Timelogger</MudText>
                 <MudText><b>@(_dayReview.TimelogQueried ? $"{_dayReview.TimelogTotal} h" : "—")</b> in Timelog</MudText>
+                @if (_dayReview.TimesheetStatus is not null)
+                {
+                    <MudTooltip Text="Weekly timesheet status in Timelog. A closed timesheet rejects any changes until it is reopened.">
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(_dayReview.IsTimesheetClosed ? Color.Error : Color.Success)"
+                                 Icon="@(_dayReview.IsTimesheetClosed ? Icons.Material.Filled.Lock : Icons.Material.Filled.LockOpen)">
+                            Timesheet @_dayReview.TimesheetStatus.ToLowerInvariant()
+                        </MudChip>
+                    </MudTooltip>
+                }
                 @if (_dayReview.TimelogQueried)
                 {
                     @if (_dayReview.Groups.All(g => g.State == DayGroupState.Match))
@@ -335,11 +345,17 @@ else
                                                  Dense="true" Margin="Margin.Dense" Style="width:80px" />
                             }
                             <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Warning"
-                                       Disabled="@_dayReviewBusy"
+                                       Disabled="@(_dayReviewBusy || _dayReview.IsTimesheetClosed)"
                                        OnClick="@(() => ResolveDayDifferenceAsync(group))">
                                 Apply to Timelog
                             </MudButton>
-                            @if (group.Registrations[0].IsApproved)
+                            @if (_dayReview.IsTimesheetClosed)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error">
+                                    Timesheet is closed in Timelog — changes are rejected until it is reopened.
+                                </MudText>
+                            }
+                            else if (group.Registrations[0].IsApproved)
                             {
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">
                                     Registration is approved in Timelog — the change may be rejected.
@@ -353,13 +369,29 @@ else
                             Multiple entries or registrations share this task — resolve on the Submission page or directly in Timelog.
                         </MudText>
                     }
-                    else if (group.State == DayGroupState.MissingInTimelog)
+                    else if (group.State is DayGroupState.MissingInTimelog
+                             || (group.State == DayGroupState.Unmapped && group.ApiTaskId is not null))
                     {
-                        <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Primary" Class="mt-2"
-                                   Disabled="@_dayReviewBusy"
-                                   OnClick="@(() => SubmitDayGroupAsync(group))">
-                            Submit @(group.Entries.Count == 1 ? "entry" : $"{group.Entries.Count} entries") to Timelog
-                        </MudButton>
+                        @if (group.State == DayGroupState.Unmapped)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">
+                                Timelog side unknown — registrations for this person are not readable with the current credentials.
+                            </MudText>
+                        }
+                        @if (_dayReview.IsTimesheetClosed)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2 d-block">
+                                Timesheet is closed in Timelog — submissions are rejected until it is reopened.
+                            </MudText>
+                        }
+                        else if (CanSubmitDayGroup(group))
+                        {
+                            <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Primary" Class="mt-2"
+                                       Disabled="@_dayReviewBusy"
+                                       OnClick="@(() => SubmitDayGroupAsync(group))">
+                                Submit @(group.Entries.Count == 1 ? "entry" : $"{group.Entries.Count} entries") to Timelog
+                            </MudButton>
+                        }
                     }
                     else if (group.State == DayGroupState.OnlyInTimelog)
                     {
@@ -367,7 +399,7 @@ else
                             Exists only in Timelog (manually entered or from another source) — not managed by Timelogger.
                         </MudText>
                     }
-                    else if (group.State == DayGroupState.Unmapped && group.ApiTaskId is null)
+                    else if (group.State == DayGroupState.Unmapped)
                     {
                         <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
                             Map these entries to a Timelog task first (Map action in the entries table).
@@ -569,8 +601,12 @@ else
 
     private async Task SubmitDayGroupAsync(DayReviewGroup group)
     {
+        var submittable = group.State == DayGroupState.MissingInTimelog
+            ? group.Entries.Where(e => e.Status is "Mapped" or "Failed" or "Submitted")
+            : group.Entries.Where(e => e.Status is "Mapped" or "Failed");
+
         _dayReviewBusy = true;
-        var result = await SubmissionService.SubmitSelectedAsync(group.Entries.Select(e => e.Id).ToList());
+        var result = await SubmissionService.SubmitSelectedAsync(submittable.Select(e => e.Id).ToList());
         _dayReviewBusy = false;
 
         if (result.Failed == 0 && result.Skipped == 0)
@@ -581,6 +617,13 @@ else
         await LoadDayReviewAsync();
         await LoadAsync();
     }
+
+    // Verified-missing groups may re-push Submitted entries (registration was deleted in
+    // Timelog); when the Timelog side is unknown, only never-landed entries are offered.
+    private static bool CanSubmitDayGroup(DayReviewGroup group) =>
+        group.State == DayGroupState.MissingInTimelog
+            ? group.Entries.Any(e => e.Status is "Mapped" or "Failed" or "Submitted")
+            : group.Entries.Any(e => e.Status is "Mapped" or "Failed");
 
     private static string GroupStateLabel(DayGroupState state) => state switch
     {

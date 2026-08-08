@@ -32,6 +32,7 @@ public class DayReviewService(
         List<TimeTrackingItemDto> registrations = [];
         var timelogQueried = false;
         string? warning = null;
+        string? timesheetStatus = null;
 
         if (mapping is null)
         {
@@ -39,26 +40,61 @@ public class DayReviewService(
         }
         else
         {
+            var dateStr = date.ToString("yyyy-MM-dd");
+
             try
             {
-                var dateStr = date.ToString("yyyy-MM-dd");
-                var items = await apiClient.GetTimeTrackingItemsByDateAsync(
-                    $"{dateStr}T00:00:00", $"{dateStr}T23:59:59", ct);
-
-                registrations = items?.Data?
-                    .Where(t => t.UserId == mapping.TimelogUserId)
-                    .ToList() ?? [];
-                timelogQueried = true;
+                var statuses = await apiClient.GetWeeklyTimesheetStatusAsync(
+                    $"{dateStr}T00:00:00", $"{dateStr}T23:59:59", mapping.TimelogUserId, ct);
+                timesheetStatus = statuses?.Data?
+                    .FirstOrDefault(s => s.EmployeeUserId == mapping.TimelogUserId)?
+                    .Details.FirstOrDefault()?.TimesheetStatus;
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to fetch Timelog registrations for {AccountId} on {Date}", accountId, date);
-                warning = $"Timelog could not be queried: {ex.Message}";
+                logger.LogWarning(ex, "Failed to fetch Timelog timesheet status for {AccountId} on {Date}", accountId, date);
+            }
+
+            // get-by-date only ever returns registrations of the user the API key is issued to,
+            // so for anyone else an empty result means "not visible", not "not registered".
+            int? apiUserId = null;
+            try
+            {
+                apiUserId = (await apiClient.GetCurrentUserAsync(ct))?.Properties?.UserId;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to resolve the Timelog API key user");
+            }
+
+            if (apiUserId != mapping.TimelogUserId)
+            {
+                warning = $"Timelog's API only exposes registration details for the API key's own user — " +
+                          $"hours registered in Timelog for {userDisplay} cannot be read with the current credentials, " +
+                          "so the Timelog side is unknown.";
+            }
+            else
+            {
+                try
+                {
+                    var items = await apiClient.GetTimeTrackingItemsByDateAsync(
+                        $"{dateStr}T00:00:00", $"{dateStr}T23:59:59", ct);
+
+                    registrations = items?.Data?
+                        .Where(t => t.UserId == mapping.TimelogUserId)
+                        .ToList() ?? [];
+                    timelogQueried = true;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to fetch Timelog registrations for {AccountId} on {Date}", accountId, date);
+                    warning = $"Timelog could not be queried: {ex.Message}";
+                }
             }
         }
 
         return new DayReviewResult(userDisplay, date, timelogQueried, warning,
-            BuildGroups(entries, registrations, timelogQueried));
+            BuildGroups(entries, registrations, timelogQueried), timesheetStatus);
     }
 
     private static List<DayReviewGroup> BuildGroups(

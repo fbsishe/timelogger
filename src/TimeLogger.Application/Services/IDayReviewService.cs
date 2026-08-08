@@ -68,10 +68,14 @@ public record DayReviewResult(
     DateOnly Date,
     bool TimelogQueried,
     string? Warning,
-    IReadOnlyList<DayReviewGroup> Groups)
+    IReadOnlyList<DayReviewGroup> Groups,
+    string? TimesheetStatus = null)
 {
     public double OurTotal => Math.Round(Groups.Sum(g => g.OurHours), 2);
     public double TimelogTotal => Math.Round(Groups.Sum(g => g.TimelogHours), 2);
+
+    /// <summary>The person's Timelog week is submitted/approved — writes will be rejected (422 "Date is closed by Timesheet").</summary>
+    public bool IsTimesheetClosed => string.Equals(TimesheetStatus, "Closed", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>

@@ -59,7 +59,9 @@ public class TimelogSubmissionService(
 
         // Primary conflict check: query Timelog directly for all registrations on this date.
         // This catches manually-entered entries that our local DB doesn't know about.
-        var performedApiCheck = false;
+        // Caveat: get-by-date only returns registrations of the user the API key is issued to,
+        // so an empty result is only conclusive when the entry belongs to that same user.
+        var apiCheckAuthoritative = false;
         if (employeeMapping is not null)
         {
             try
@@ -72,7 +74,7 @@ public class TimelogSubmissionService(
                 var existing = items?.Data?.FirstOrDefault(t =>
                     t.TaskId == resolvedApiTaskId && t.UserId == employeeMapping.TimelogUserId);
 
-                performedApiCheck = true;
+                apiCheckAuthoritative = await GetApiUserIdAsync(cancellationToken) == employeeMapping.TimelogUserId;
 
                 if (existing is not null)
                 {
@@ -101,8 +103,9 @@ public class TimelogSubmissionService(
         }
 
         // Fallback: check our own SubmittedEntries for a previous successful submission to the
-        // same task/user/date. Only runs when the API check above was skipped or failed.
-        if (!performedApiCheck)
+        // same task/user/date. Runs whenever the API check was skipped, failed, or could not
+        // see this user's registrations (i.e. the entry belongs to someone other than the key user).
+        if (!apiCheckAuthoritative)
         {
             var previousSubmission = await db.SubmittedEntries
                 .Include(s => s.ImportedEntry)
@@ -321,6 +324,27 @@ public class TimelogSubmissionService(
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private int? _apiUserId;
+    private bool _apiUserResolved;
+
+    /// <summary>The Timelog user the API key belongs to; null when it cannot be resolved.</summary>
+    private async Task<int?> GetApiUserIdAsync(CancellationToken cancellationToken)
+    {
+        if (!_apiUserResolved)
+        {
+            try
+            {
+                _apiUserId = (await apiClient.GetCurrentUserAsync(cancellationToken))?.Properties?.UserId;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Failed to resolve the Timelog API key user — treating API conflict checks as non-authoritative");
+            }
+            _apiUserResolved = true;
+        }
+        return _apiUserId;
+    }
 
     private async Task<SubmitOutcome> RecordDuplicate(
         ImportedEntry entry,

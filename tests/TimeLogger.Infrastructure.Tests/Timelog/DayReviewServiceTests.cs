@@ -29,7 +29,33 @@ public class DayReviewServiceTests : IDisposable
         _db = new AppDbContext(options);
         _sut = new DayReviewService(_apiClientMock.Object, _db, _submitterMock.Object,
             NullLogger<DayReviewService>.Instance);
+
+        // get-by-date is only readable for the API key's own user; tests default to key user 8.
+        SetupApiUser(8);
+        SetupTimesheetStatus(null);
     }
+
+    private void SetupApiUser(int userId) =>
+        _apiClientMock
+            .Setup(c => c.GetCurrentUserAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafEntity<TimelogUserDto> { Properties = new TimelogUserDto { UserId = userId } });
+
+    private void SetupTimesheetStatus(string? status) =>
+        _apiClientMock
+            .Setup(c => c.GetWeeklyTimesheetStatusAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafListResponse<WeeklyTimesheetStatusDto>
+            {
+                Entities = status is null
+                    ? []
+                    : [new TafEntity<WeeklyTimesheetStatusDto>
+                      {
+                          Properties = new WeeklyTimesheetStatusDto
+                          {
+                              EmployeeUserId = 8,
+                              Details = [new WeeklyTimesheetStatusDetailDto { WeekNumber = 27, TimesheetStatus = status }],
+                          },
+                      }],
+            });
 
     public void Dispose() => _db.Dispose();
 
@@ -280,6 +306,67 @@ public class DayReviewServiceTests : IDisposable
         Assert.NotNull(result.Warning);
         var group = Assert.Single(result.Groups);
         Assert.Equal(DayGroupState.Unmapped, group.State);
+    }
+
+    [Fact]
+    public async Task OtherUsersDay_TimelogSideIsUnknown_NotMissing()
+    {
+        var task = await SeedTaskAsync();
+        await SeedEntryAsync(task.Id, status: ImportStatus.Failed);
+        await SeedMappingAsync(timelogUserId: 25); // key user is 8
+        SetupApiReturns();
+
+        var result = await _sut.GetDayReviewAsync(AccountId, Date);
+
+        Assert.False(result.TimelogQueried);
+        Assert.Contains("cannot be read", result.Warning);
+        var group = Assert.Single(result.Groups);
+        Assert.Equal(DayGroupState.Unmapped, group.State);
+        _apiClientMock.Verify(
+            c => c.GetTimeTrackingItemsByDateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task TimesheetStatus_IsReportedForAnyUser()
+    {
+        var task = await SeedTaskAsync();
+        await SeedEntryAsync(task.Id);
+        await SeedMappingAsync(timelogUserId: 25);
+        _apiClientMock
+            .Setup(c => c.GetWeeklyTimesheetStatusAsync(It.IsAny<string>(), It.IsAny<string>(), 25, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TafListResponse<WeeklyTimesheetStatusDto>
+            {
+                Entities = [new TafEntity<WeeklyTimesheetStatusDto>
+                {
+                    Properties = new WeeklyTimesheetStatusDto
+                    {
+                        EmployeeUserId = 25,
+                        Details = [new WeeklyTimesheetStatusDetailDto { WeekNumber = 27, TimesheetStatus = "Closed" }],
+                    },
+                }],
+            });
+
+        var result = await _sut.GetDayReviewAsync(AccountId, Date);
+
+        Assert.Equal("Closed", result.TimesheetStatus);
+        Assert.True(result.IsTimesheetClosed);
+    }
+
+    [Fact]
+    public async Task KeyUsersDay_StillFullyCompared()
+    {
+        var task = await SeedTaskAsync();
+        await SeedEntryAsync(task.Id, hours: 2.0);
+        await SeedMappingAsync(timelogUserId: 8);
+        SetupTimesheetStatus("Open");
+        SetupApiReturns(Registration(500, 2.0));
+
+        var result = await _sut.GetDayReviewAsync(AccountId, Date);
+
+        Assert.True(result.TimelogQueried);
+        Assert.False(result.IsTimesheetClosed);
+        Assert.Equal(DayGroupState.Match, Assert.Single(result.Groups).State);
     }
 
     [Fact]
