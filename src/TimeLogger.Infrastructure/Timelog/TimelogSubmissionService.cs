@@ -12,6 +12,7 @@ namespace TimeLogger.Infrastructure.Timelog;
 
 public class TimelogSubmissionService(
     ITimelogApiClient apiClient,
+    ITimelogReportingClient reportingClient,
     AppDbContext db,
     IOptions<TimelogOptions> options,
     ILogger<TimelogSubmissionService> logger) : ITimelogSubmissionService
@@ -59,43 +60,61 @@ public class TimelogSubmissionService(
 
         // Primary conflict check: query Timelog directly for all registrations on this date.
         // This catches manually-entered entries that our local DB doesn't know about.
-        // Caveat: get-by-date only returns registrations of the user the API key is issued to,
-        // so an empty result is only conclusive when the entry belongs to that same user.
+        // The Reporting API sees every employee; the REST get-by-date fallback only returns
+        // registrations of the user the API key is issued to, so its empty result is only
+        // conclusive when the entry belongs to that same user.
         var apiCheckAuthoritative = false;
         if (employeeMapping is not null)
         {
             try
             {
-                var items = await apiClient.GetTimeTrackingItemsByDateAsync(
-                    $"{dateStr}T00:00:00",
-                    $"{dateStr}T23:59:59",
-                    cancellationToken);
+                double? existingHours = null;
+                string? existingRegistrationId = null;
 
-                var existing = items?.Data?.FirstOrDefault(t =>
-                    t.TaskId == resolvedApiTaskId && t.UserId == employeeMapping.TimelogUserId);
-
-                apiCheckAuthoritative = await GetApiUserIdAsync(cancellationToken) == employeeMapping.TimelogUserId;
-
-                if (existing is not null)
+                if (reportingClient.IsConfigured)
                 {
-                    if (Math.Abs(existing.Hours - ourHours) < 0.01)
+                    var workUnit = (await GetWorkUnitsCachedAsync(entry.WorkDate, cancellationToken))
+                        .FirstOrDefault(u => u.TaskId == resolvedApiTaskId && u.UserId == employeeMapping.TimelogUserId);
+                    apiCheckAuthoritative = true;
+                    existingHours = workUnit?.Hours;
+                    existingRegistrationId = workUnit?.TimeRegistrationGuid;
+                }
+                else
+                {
+                    var items = await apiClient.GetTimeTrackingItemsByDateAsync(
+                        $"{dateStr}T00:00:00",
+                        $"{dateStr}T23:59:59",
+                        cancellationToken);
+
+                    var existing = items?.Data?.FirstOrDefault(t =>
+                        t.TaskId == resolvedApiTaskId && t.UserId == employeeMapping.TimelogUserId);
+
+                    apiCheckAuthoritative = await GetApiUserIdAsync(cancellationToken) == employeeMapping.TimelogUserId;
+                    existingHours = existing?.Hours;
+                    existingRegistrationId = existing?.TimeRegistrationId.ToString();
+                }
+
+                if (existingHours is not null)
+                {
+                    if (Math.Abs(existingHours.Value - ourHours) < 0.01)
                     {
                         logger.LogInformation(
                             "Entry {EntryId}: Timelog already has {Hours}h for task {TaskId} on {Date} — Duplicate",
-                            entry.Id, existing.Hours, resolvedApiTaskId, dateStr);
-                        return await RecordDuplicate(entry, existing.TimeRegistrationId.ToString(), cancellationToken);
+                            entry.Id, existingHours, resolvedApiTaskId, dateStr);
+                        return await RecordDuplicate(entry, existingRegistrationId, cancellationToken);
                     }
                     else
                     {
                         logger.LogInformation(
                             "Entry {EntryId}: Timelog has {ExistingHours}h for task {TaskId} on {Date}, we have {OurHours}h — Conflict",
-                            entry.Id, existing.Hours, resolvedApiTaskId, dateStr, ourHours);
-                        return await RecordConflict(entry, existing.Hours, existing.TimeRegistrationId.ToString(), cancellationToken);
+                            entry.Id, existingHours, resolvedApiTaskId, dateStr, ourHours);
+                        return await RecordConflict(entry, existingHours.Value, existingRegistrationId, cancellationToken);
                     }
                 }
             }
             catch (Exception ex)
             {
+                apiCheckAuthoritative = false;
                 logger.LogWarning(ex,
                     "Timelog conflict check failed for entry {EntryId}; falling back to local-DB check",
                     entry.Id);
@@ -324,6 +343,21 @@ public class TimelogSubmissionService(
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    // Per-instance cache: batch submissions hit the same work dates repeatedly, and the
+    // Reporting API returns the whole company per call anyway.
+    private readonly Dictionary<DateOnly, IReadOnlyList<WorkUnitItem>> _workUnitCache = [];
+
+    private async Task<IReadOnlyList<WorkUnitItem>> GetWorkUnitsCachedAsync(
+        DateOnly date, CancellationToken cancellationToken)
+    {
+        if (!_workUnitCache.TryGetValue(date, out var units))
+        {
+            units = await reportingClient.GetWorkUnitsAsync(date, date, cancellationToken);
+            _workUnitCache[date] = units;
+        }
+        return units;
+    }
 
     private int? _apiUserId;
     private bool _apiUserResolved;

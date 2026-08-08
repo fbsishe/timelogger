@@ -17,6 +17,7 @@ public class TimelogSubmissionServiceTests : IDisposable
 {
     private readonly AppDbContext _db;
     private readonly Mock<ITimelogApiClient> _apiClientMock;
+    private readonly Mock<ITimelogReportingClient> _reportingMock = new();
     private readonly TimelogSubmissionService _sut;
 
     public TimelogSubmissionServiceTests()
@@ -26,12 +27,14 @@ public class TimelogSubmissionServiceTests : IDisposable
             .Options;
         _db = new AppDbContext(options);
         _apiClientMock = new Mock<ITimelogApiClient>();
+        _reportingMock.SetupGet(r => r.IsConfigured).Returns(false); // REST fallback by default
         _sut = CreateSut();
     }
 
     private TimelogSubmissionService CreateSut(int retryCount = 1) =>
         new(
             _apiClientMock.Object,
+            _reportingMock.Object,
             _db,
             Options.Create(new TimelogOptions
             {
@@ -107,6 +110,49 @@ public class TimelogSubmissionServiceTests : IDisposable
             AttemptCount = 1,
         });
         await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ReportingConfigured_DetectsConflictForOtherUsersManualEntry()
+    {
+        // With the Reporting API configured, existing registrations are visible for ANY user —
+        // including manually-entered ones — and the conflict carries the registration GUID.
+        var (entry, _) = await SeedEntryWithTaskAsync(); // 2h on task 999
+        _db.EmployeeMappings.Add(new EmployeeMapping { AtlassianAccountId = entry.UserEmail, TimelogUserId = 25 });
+        await _db.SaveChangesAsync();
+
+        _reportingMock.SetupGet(r => r.IsConfigured).Returns(true);
+        _reportingMock
+            .Setup(r => r.GetWorkUnitsAsync(entry.WorkDate, entry.WorkDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkUnitItem("manual-guid", 25, 999, "Dev Task", "Proj", entry.WorkDate, "Manual", 5.0, 10, false, null, null)]);
+
+        var outcome = await _sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Conflict, outcome);
+        Assert.Equal(ImportStatus.Conflict, entry.Status);
+        Assert.Equal(5.0, entry.ConflictHoursInTimelog);
+        Assert.Equal("manual-guid", entry.ConflictTimelogRegistrationId);
+        _apiClientMock.Verify(
+            c => c.GetTimeTrackingItemsByDateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ReportingConfigured_MatchingHoursIsDuplicate()
+    {
+        var (entry, _) = await SeedEntryWithTaskAsync(); // 2h
+        _db.EmployeeMappings.Add(new EmployeeMapping { AtlassianAccountId = entry.UserEmail, TimelogUserId = 25 });
+        await _db.SaveChangesAsync();
+
+        _reportingMock.SetupGet(r => r.IsConfigured).Returns(true);
+        _reportingMock
+            .Setup(r => r.GetWorkUnitsAsync(entry.WorkDate, entry.WorkDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkUnitItem("dup-guid", 25, 999, "Dev Task", "Proj", entry.WorkDate, "Same", 2.0, 0, false, null, null)]);
+
+        var outcome = await _sut.SubmitAsync(entry);
+
+        Assert.Equal(SubmitOutcome.Duplicate, outcome);
+        Assert.Equal(ImportStatus.Submitted, entry.Status);
     }
 
     [Fact]

@@ -27,7 +27,7 @@ public record DayReviewEntry(
 
 /// <summary>One time registration on the Timelog side of the comparison.</summary>
 public record DayReviewRegistration(
-    int TimeRegistrationId,
+    string RegistrationId,
     string? TaskName,
     string? ProjectName,
     double Hours,
@@ -38,8 +38,9 @@ public record DayReviewRegistration(
     DateTime? LastModified)
 {
     /// <summary>
-    /// Best-effort "already approved/closed in Timelog" signal. The approval enum is
-    /// undocumented; values 6 and 7 are what approved months show in practice.
+    /// Best-effort "already locked (closed/approved) in Timelog" signal. Works for both
+    /// scales in play: REST get-by-date uses an undocumented enum where 6/7 = approved;
+    /// the Reporting API uses 0 = open, 10 = closed, 20/30 = approved.
     /// </summary>
     public bool IsApproved => ApprovalStatus >= 6;
 }
@@ -94,11 +95,12 @@ public interface IDayReviewService
     /// <summary>
     /// Resolves a 1:1 hour difference against a live Timelog registration, regardless of the
     /// entry's current status (covers both unresolved conflicts and post-submission drift).
-    /// Records the conflict on the entry, then reuses the standard resolution flow.
+    /// Records the conflict on the entry, then reuses the standard resolution flow:
+    /// a GUID registration id resolves via PUT, an integer id via delete+recreate.
     /// </summary>
     Task<SubmitOutcome> ResolveDifferenceAsync(
         int entryId,
-        int timelogRegistrationId,
+        string timelogRegistrationId,
         double timelogHours,
         ConflictResolution resolution,
         double? customHours = null,

@@ -126,7 +126,7 @@ public class EntriesPageTests : BunitContext, IAsyncLifetime
             [
                 new DayReviewGroup(500, "Dev Task",
                     [new DayReviewEntry(1, "PROJ-1", "Some work", 2.0, "Submitted")],
-                    [new DayReviewRegistration(4242, "Dev Task", "Proj", 3.5, "Some work", 7, true, null, null)],
+                    [new DayReviewRegistration("4242", "Dev Task", "Proj", 3.5, "Some work", 7, true, null, null)],
                     DayGroupState.Different),
             ]));
 

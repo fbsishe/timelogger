@@ -11,6 +11,7 @@ namespace TimeLogger.Infrastructure.Timelog;
 
 public class DayReviewService(
     ITimelogApiClient apiClient,
+    ITimelogReportingClient reportingClient,
     AppDbContext db,
     ITimelogSubmissionService submitter,
     ILogger<DayReviewService> logger) : IDayReviewService
@@ -29,7 +30,7 @@ public class DayReviewService(
 
         var userDisplay = mapping?.DisplayName ?? mapping?.TimelogUserDisplayName ?? accountId;
 
-        List<TimeTrackingItemDto> registrations = [];
+        List<(int TaskId, DayReviewRegistration Registration)> registrations = [];
         var timelogQueried = false;
         string? warning = null;
         string? timesheetStatus = null;
@@ -55,40 +56,65 @@ public class DayReviewService(
                 logger.LogWarning(ex, "Failed to fetch Timelog timesheet status for {AccountId} on {Date}", accountId, date);
             }
 
-            // get-by-date only ever returns registrations of the user the API key is issued to,
-            // so for anyone else an empty result means "not visible", not "not registered".
-            int? apiUserId = null;
-            try
+            if (reportingClient.IsConfigured)
             {
-                apiUserId = (await apiClient.GetCurrentUserAsync(ct))?.Properties?.UserId;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to resolve the Timelog API key user");
-            }
-
-            if (apiUserId != mapping.TimelogUserId)
-            {
-                warning = $"Timelog's API only exposes registration details for the API key's own user — " +
-                          $"hours registered in Timelog for {userDisplay} cannot be read with the current credentials, " +
-                          "so the Timelog side is unknown.";
-            }
-            else
-            {
+                // The Reporting API sees every employee's registrations.
                 try
                 {
-                    var items = await apiClient.GetTimeTrackingItemsByDateAsync(
-                        $"{dateStr}T00:00:00", $"{dateStr}T23:59:59", ct);
-
-                    registrations = items?.Data?
-                        .Where(t => t.UserId == mapping.TimelogUserId)
-                        .ToList() ?? [];
+                    registrations = (await reportingClient.GetWorkUnitsAsync(date, date, ct))
+                        .Where(u => u.UserId == mapping.TimelogUserId)
+                        .Select(u => (u.TaskId, new DayReviewRegistration(
+                            u.TimeRegistrationGuid ?? "", u.TaskName, u.ProjectName, u.Hours,
+                            u.Note, u.ApprovedStatus, u.Invoiced, u.Created, u.LastModified)))
+                        .ToList();
                     timelogQueried = true;
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "Failed to fetch Timelog registrations for {AccountId} on {Date}", accountId, date);
+                    logger.LogWarning(ex, "Reporting API query failed for {AccountId} on {Date}", accountId, date);
                     warning = $"Timelog could not be queried: {ex.Message}";
+                }
+            }
+            else
+            {
+                // REST fallback: get-by-date only ever returns registrations of the user the API
+                // key is issued to, so for anyone else an empty result means "not visible".
+                int? apiUserId = null;
+                try
+                {
+                    apiUserId = (await apiClient.GetCurrentUserAsync(ct))?.Properties?.UserId;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to resolve the Timelog API key user");
+                }
+
+                if (apiUserId != mapping.TimelogUserId)
+                {
+                    warning = $"Timelog registrations for {userDisplay} cannot be read with the current credentials " +
+                              "(no Reporting API configured, and the REST key only sees its own user) — " +
+                              "the Timelog side is unknown.";
+                }
+                else
+                {
+                    try
+                    {
+                        var items = await apiClient.GetTimeTrackingItemsByDateAsync(
+                            $"{dateStr}T00:00:00", $"{dateStr}T23:59:59", ct);
+
+                        registrations = items?.Data?
+                            .Where(t => t.UserId == mapping.TimelogUserId)
+                            .Select(t => (t.TaskId, new DayReviewRegistration(
+                                t.TimeRegistrationId.ToString(), t.TaskName, t.ProjectName, t.Hours,
+                                t.Comment, t.ApprovalStatus, t.InvoiceStatus, t.Created, t.LastModified)))
+                            .ToList() ?? [];
+                        timelogQueried = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to fetch Timelog registrations for {AccountId} on {Date}", accountId, date);
+                        warning = $"Timelog could not be queried: {ex.Message}";
+                    }
                 }
             }
         }
@@ -99,7 +125,7 @@ public class DayReviewService(
 
     private static List<DayReviewGroup> BuildGroups(
         List<ImportedEntry> entries,
-        List<TimeTrackingItemDto> registrations,
+        List<(int TaskId, DayReviewRegistration Registration)> registrations,
         bool timelogQueried)
     {
         var mapped = entries.Where(e => ResolveApiTaskId(e) is not null).ToList();
@@ -110,7 +136,7 @@ public class DayReviewService(
             .ToDictionary(g => g.Key, g => g.ToList());
         var regsByTask = registrations
             .GroupBy(r => r.TaskId)
-            .ToDictionary(g => g.Key, g => g.ToList());
+            .ToDictionary(g => g.Key, g => g.Select(r => r.Registration).ToList());
 
         var groups = new List<DayReviewGroup>();
 
@@ -137,7 +163,7 @@ public class DayReviewService(
             if (!timelogQueried && state == DayGroupState.MissingInTimelog)
                 state = DayGroupState.Unmapped;
 
-            groups.Add(new DayReviewGroup(taskId, taskName, ToEntryItems(ours), ToRegistrationItems(regs), state));
+            groups.Add(new DayReviewGroup(taskId, taskName, ToEntryItems(ours), regs, state));
         }
 
         if (unmapped.Count > 0)
@@ -157,18 +183,6 @@ public class DayReviewService(
             Math.Round(e.TimeSpentSeconds / 3600.0, 2),
             e.Status.ToString())).ToList();
 
-    private static List<DayReviewRegistration> ToRegistrationItems(List<TimeTrackingItemDto> regs) =>
-        regs.Select(r => new DayReviewRegistration(
-            r.TimeRegistrationId,
-            r.TaskName,
-            r.ProjectName,
-            r.Hours,
-            r.Comment,
-            r.ApprovalStatus,
-            r.InvoiceStatus,
-            r.Created,
-            r.LastModified)).ToList();
-
     // Mirrors the task-ID resolution used at submission time.
     private static int? ResolveApiTaskId(ImportedEntry entry)
     {
@@ -179,7 +193,7 @@ public class DayReviewService(
 
     public async Task<SubmitOutcome> ResolveDifferenceAsync(
         int entryId,
-        int timelogRegistrationId,
+        string timelogRegistrationId,
         double timelogHours,
         ConflictResolution resolution,
         double? customHours = null,
@@ -194,7 +208,7 @@ public class DayReviewService(
         // the entry surfaces on the submission page instead of silently staying "Submitted".
         entry.Status = ImportStatus.Conflict;
         entry.ConflictHoursInTimelog = timelogHours;
-        entry.ConflictTimelogRegistrationId = timelogRegistrationId.ToString();
+        entry.ConflictTimelogRegistrationId = timelogRegistrationId;
         await db.SaveChangesAsync(ct);
 
         return await submitter.ResolveConflictAsync(entry, resolution, customHours, ct);

@@ -18,6 +18,7 @@ public class DayReviewServiceTests : IDisposable
 
     private readonly AppDbContext _db;
     private readonly Mock<ITimelogApiClient> _apiClientMock = new();
+    private readonly Mock<ITimelogReportingClient> _reportingMock = new();
     private readonly Mock<ITimelogSubmissionService> _submitterMock = new();
     private readonly DayReviewService _sut;
 
@@ -27,7 +28,8 @@ public class DayReviewServiceTests : IDisposable
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
         _db = new AppDbContext(options);
-        _sut = new DayReviewService(_apiClientMock.Object, _db, _submitterMock.Object,
+        _reportingMock.SetupGet(r => r.IsConfigured).Returns(false); // REST fallback by default
+        _sut = new DayReviewService(_apiClientMock.Object, _reportingMock.Object, _db, _submitterMock.Object,
             NullLogger<DayReviewService>.Instance);
 
         // get-by-date is only readable for the API key's own user; tests default to key user 8.
@@ -309,6 +311,53 @@ public class DayReviewServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReportingConfigured_OtherUsersDay_IsFullyCompared()
+    {
+        var task = await SeedTaskAsync();
+        await SeedEntryAsync(task.Id, hours: 2.0, status: ImportStatus.Submitted);
+        await SeedMappingAsync(timelogUserId: 25); // not the key user
+        _reportingMock.SetupGet(r => r.IsConfigured).Returns(true);
+        _reportingMock
+            .Setup(r => r.GetWorkUnitsAsync(Date, Date, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new WorkUnitItem("guid-r1", 25, 500, "Dev Task", "Proj", Date, "Work", 3.5, 10, false, null, null),
+                new WorkUnitItem("guid-x", 8, 500, "Dev Task", "Proj", Date, "Noise", 1.0, 0, false, null, null),
+            ]);
+
+        var result = await _sut.GetDayReviewAsync(AccountId, Date);
+
+        Assert.True(result.TimelogQueried);
+        Assert.Null(result.Warning);
+        var group = Assert.Single(result.Groups);
+        Assert.Equal(DayGroupState.Different, group.State);
+        Assert.True(group.CanQuickResolve);
+        var reg = Assert.Single(group.Registrations);
+        Assert.Equal("guid-r1", reg.RegistrationId);
+        Assert.Equal(3.5, reg.Hours);
+        Assert.True(reg.IsApproved); // Reporting ApprovedStatus 10 = timesheet closed
+        _apiClientMock.Verify(
+            c => c.GetTimeTrackingItemsByDateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ReportingConfigured_RegistrationWithoutEntry_IsOnlyInTimelog()
+    {
+        await SeedMappingAsync(timelogUserId: 25);
+        _reportingMock.SetupGet(r => r.IsConfigured).Returns(true);
+        _reportingMock
+            .Setup(r => r.GetWorkUnitsAsync(Date, Date, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkUnitItem("guid-m", 25, 777, "Manual Task", "Proj", Date, "Manual", 4.0, 0, false, null, null)]);
+
+        var result = await _sut.GetDayReviewAsync(AccountId, Date);
+
+        var group = Assert.Single(result.Groups);
+        Assert.Equal(DayGroupState.OnlyInTimelog, group.State);
+        Assert.Equal("Manual Task", group.TaskName);
+    }
+
+    [Fact]
     public async Task OtherUsersDay_TimelogSideIsUnknown_NotMissing()
     {
         var task = await SeedTaskAsync();
@@ -379,7 +428,7 @@ public class DayReviewServiceTests : IDisposable
                 It.IsAny<ImportedEntry>(), ConflictResolution.UseOurs, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(SubmitOutcome.Succeeded);
 
-        var outcome = await _sut.ResolveDifferenceAsync(entry.Id, 4242, 3.5, ConflictResolution.UseOurs);
+        var outcome = await _sut.ResolveDifferenceAsync(entry.Id, "4242", 3.5, ConflictResolution.UseOurs);
 
         Assert.Equal(SubmitOutcome.Succeeded, outcome);
         _submitterMock.Verify(s => s.ResolveConflictAsync(
@@ -393,6 +442,6 @@ public class DayReviewServiceTests : IDisposable
     public async Task ResolveDifference_UnknownEntry_Throws()
     {
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _sut.ResolveDifferenceAsync(9999, 1, 1.0, ConflictResolution.UseOurs));
+            () => _sut.ResolveDifferenceAsync(9999, "1", 1.0, ConflictResolution.UseOurs));
     }
 }

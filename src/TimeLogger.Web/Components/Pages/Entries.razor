@@ -587,7 +587,7 @@ else
 
         _dayReviewBusy = true;
         var outcome = await DayReviewService.ResolveDifferenceAsync(
-            entry.Id, registration.TimeRegistrationId, registration.Hours, resolution, customHours);
+            entry.Id, registration.RegistrationId, registration.Hours, resolution, customHours);
         _dayReviewBusy = false;
 
         if (outcome == SubmitOutcome.Succeeded)
@@ -664,7 +664,7 @@ else
 
     private static string RegistrationTooltip(DayReviewRegistration r)
     {
-        var parts = new List<string> { $"Registration #{r.TimeRegistrationId}" };
+        var parts = new List<string> { $"Registration {r.RegistrationId}" };
         if (r.ApprovalStatus is not null) parts.Add($"Approval status (raw): {r.ApprovalStatus}");
         if (r.Created is not null) parts.Add($"Created {r.Created:yyyy-MM-dd HH:mm}");
         if (r.LastModified is not null && r.LastModified != r.Created) parts.Add($"Modified {r.LastModified:yyyy-MM-dd HH:mm}");
