@@ -320,7 +320,7 @@ public class TempoImportServiceTests : IDisposable
     }
 
     // ------------------------------------------------------------------
-    // Incremental pull (TL-102) — back-dated worklogs and amendments
+    // Incremental pull (TL-111) — back-dated worklogs and amendments
     // ------------------------------------------------------------------
 
     [Fact]
