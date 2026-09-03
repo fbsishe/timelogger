@@ -20,6 +20,10 @@ public class TempoImportService(
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
+    /// <summary>Statuses whose entries we may still rewrite — nothing has gone to Timelog yet.</summary>
+    private static readonly ImportStatus[] RefreshableStatuses =
+        [ImportStatus.Pending, ImportStatus.Mapped, ImportStatus.Failed, ImportStatus.Ignored];
+
     public async Task<int> ImportAsync(
         int importSourceId,
         DateOnly from,
@@ -30,105 +34,236 @@ public class TempoImportService(
         if (source is null)
             throw new InvalidOperationException($"ImportSource {importSourceId} not found.");
 
-        if (string.IsNullOrWhiteSpace(source.ApiToken))
-            throw new InvalidOperationException($"ImportSource {importSourceId} has no API token configured.");
-
-        logger.LogInformation(
-            "Importing Tempo worklogs for source '{Source}' from {From} to {To}",
-            source.Name, from, to);
-
-        var worklogs = await FetchAllWorklogsAsync(source.ApiToken, from, to, cancellationToken);
-        logger.LogInformation("Fetched {Count} worklogs from Tempo", worklogs.Count);
-
-        // Load existing external IDs to deduplicate
-        var existingIds = await db.ImportedEntries
-            .Where(e => e.ImportSourceId == importSourceId)
-            .Select(e => e.ExternalId)
-            .ToHashSetAsync(cancellationToken);
-
-        int imported = 0;
-
-        foreach (var worklog in worklogs)
-        {
-            var externalId = worklog.TempoWorklogId.ToString();
-            if (existingIds.Contains(externalId))
-                continue;
-
-            // Enrich with Jira issue details (project key, custom fields)
-            string? projectKey = null;
-            string? issueKey = null;
-            Dictionary<string, JsonElement>? customFields = null;
-
-            if (worklog.Issue?.Id is > 0)
-            {
-                try
-                {
-                    var issue = await jiraClient.GetIssueAsync(worklog.Issue.Id, cancellationToken: cancellationToken);
-                    projectKey = issue.Fields?.Project?.Key;
-                    issueKey = issue.Key;
-                    customFields = issue.Fields?.ExtensionData;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Failed to fetch Jira issue {IssueId} for worklog {WorklogId}",
-                        worklog.Issue.Id, worklog.TempoWorklogId);
-                }
-            }
-
-            var metadataJson = BuildMetadataJson(worklog, customFields);
-
-            var accountId = worklog.Author?.AccountId ?? "unknown";
-            var entry = new ImportedEntry
-            {
-                ImportSourceId = importSourceId,
-                ExternalId = externalId,
-                UserEmail = accountId,
-                WorkDate = DateOnly.Parse(worklog.StartDate),
-                TimeSpentSeconds = worklog.TimeSpentSeconds,
-                Description = worklog.Description,
-                ProjectKey = projectKey,
-                IssueKey = issueKey,
-                MetadataJson = metadataJson,
-                Status = ImportStatus.Pending,
-                ImportedAt = DateTimeOffset.UtcNow,
-            };
-
-            db.ImportedEntries.Add(entry);
-            imported++;
-        }
-
-        if (imported > 0)
-            await db.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Imported {NewCount} new entries (skipped {Skipped} duplicates)",
-            imported, worklogs.Count - imported);
-
-        return imported;
+        var result = await ImportCoreAsync(source, from, to, updatedFrom: null, cancellationToken);
+        return result.Imported;
     }
 
-    public async Task ImportYesterdayAsync(CancellationToken cancellationToken = default)
+    public async Task<TempoImportResult> ImportIncrementalAsync(CancellationToken cancellationToken = default)
     {
-        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
-
         var sources = await db.ImportSources
             .Where(s => s.SourceType == SourceType.Tempo && s.IsEnabled)
             .ToListAsync(cancellationToken);
 
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var from = today.AddDays(-Math.Abs(tempoOptions.Value.LookbackDays));
+        var total = new TempoImportResult(0, 0, 0);
+
         foreach (var source in sources)
         {
+            // Capture the fetch start *before* the call: anything amended while we are
+            // running must be caught by the next pull, not skipped.
+            var pollStartedAt = DateTimeOffset.UtcNow;
+
+            // A null watermark means this source has never polled successfully — fall back to
+            // a plain window sweep so the first run backfills instead of pulling all of history.
+            var watermark = source.LastPolledAt?
+                .AddMinutes(-Math.Abs(tempoOptions.Value.WatermarkOverlapMinutes));
+
             try
             {
-                await ImportAsync(source.Id, yesterday, yesterday, cancellationToken);
-                source.LastPolledAt = DateTimeOffset.UtcNow;
+                var result = await ImportCoreAsync(source, from, today, watermark, cancellationToken);
+                total = new TempoImportResult(
+                    total.Imported + result.Imported,
+                    total.Refreshed + result.Refreshed,
+                    total.ChangedAfterSubmission + result.ChangedAfterSubmission);
+
+                source.LastPolledAt = pollStartedAt;
             }
             catch (Exception ex)
             {
+                // Leave LastPolledAt untouched so the next run retries this same span.
                 logger.LogError(ex, "Failed to import worklogs for source '{Source}'", source.Name);
             }
         }
 
         await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Incremental Tempo pull: {Imported} new, {Refreshed} refreshed, {Stuck} changed after submission",
+            total.Imported, total.Refreshed, total.ChangedAfterSubmission);
+
+        return total;
+    }
+
+    // ------------------------------------------------------------------
+    // Core
+    // ------------------------------------------------------------------
+
+    private async Task<TempoImportResult> ImportCoreAsync(
+        ImportSource source,
+        DateOnly from,
+        DateOnly to,
+        DateTimeOffset? updatedFrom,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(source.ApiToken))
+            throw new InvalidOperationException($"ImportSource {source.Id} has no API token configured.");
+
+        logger.LogInformation(
+            "Importing Tempo worklogs for source '{Source}' from {From} to {To}{Incremental}",
+            source.Name, from, to,
+            updatedFrom is null ? "" : $" (updated since {updatedFrom:u})");
+
+        var worklogs = await FetchAllWorklogsAsync(source.ApiToken, from, to, updatedFrom, cancellationToken);
+        logger.LogInformation("Fetched {Count} worklogs from Tempo", worklogs.Count);
+
+        if (worklogs.Count == 0)
+            return new TempoImportResult(0, 0, 0);
+
+        var existing = await LoadExistingAsync(source.Id, worklogs, cancellationToken);
+
+        int imported = 0, refreshed = 0, changedAfterSubmission = 0, unchanged = 0, touched = 0;
+
+        foreach (var worklog in worklogs)
+        {
+            var externalId = worklog.TempoWorklogId.ToString();
+
+            if (existing.TryGetValue(externalId, out var entry))
+            {
+                switch (Reconcile(entry, worklog))
+                {
+                    case ReconcileOutcome.Unchanged:
+                        unchanged++;
+                        continue;
+                    case ReconcileOutcome.TimestampOnly:
+                        // Record it so later pulls stop re-examining this worklog.
+                        entry.SourceUpdatedAt = worklog.UpdatedAt;
+                        unchanged++;
+                        touched++;
+                        continue;
+                    case ReconcileOutcome.BlockedBySubmission:
+                        changedAfterSubmission++;
+                        logger.LogWarning(
+                            "Tempo worklog {WorklogId} was amended after we submitted entry {EntryId} to Timelog "
+                            + "({OldHours:F2}h -> {NewHours:F2}h) — left untouched, needs manual review",
+                            worklog.TempoWorklogId, entry.Id,
+                            entry.TimeSpentSeconds / 3600.0, worklog.TimeSpentSeconds / 3600.0);
+                        continue;
+                    case ReconcileOutcome.Refresh:
+                        var enrichment = await EnrichAsync(worklog, cancellationToken);
+                        Apply(entry, worklog, enrichment);
+                        // Re-run the mapping engine over the amended values.
+                        entry.Status = ImportStatus.Pending;
+                        entry.MappingRuleId = null;
+                        refreshed++;
+                        continue;
+                }
+            }
+
+            var newEnrichment = await EnrichAsync(worklog, cancellationToken);
+            var created = new ImportedEntry
+            {
+                ImportSourceId = source.Id,
+                ExternalId = externalId,
+                UserEmail = worklog.Author?.AccountId ?? "unknown",
+                WorkDate = DateOnly.Parse(worklog.StartDate),
+                Status = ImportStatus.Pending,
+                ImportedAt = DateTimeOffset.UtcNow,
+            };
+            Apply(created, worklog, newEnrichment);
+
+            db.ImportedEntries.Add(created);
+            imported++;
+        }
+
+        if (imported > 0 || refreshed > 0 || touched > 0)
+            await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Imported {NewCount} new, refreshed {Refreshed}, skipped {Unchanged} unchanged, "
+            + "{Blocked} amended after submission",
+            imported, refreshed, unchanged, changedAfterSubmission);
+
+        return new TempoImportResult(imported, refreshed, changedAfterSubmission);
+    }
+
+    private enum ReconcileOutcome { Unchanged, TimestampOnly, Refresh, BlockedBySubmission }
+
+    /// <summary>
+    /// Decides what to do with a worklog we have already imported. Tempo's <c>updatedAt</c> is
+    /// authoritative when present; otherwise fall back to comparing the fields we store.
+    /// </summary>
+    private static ReconcileOutcome Reconcile(ImportedEntry entry, Dto.TempoWorklogDto worklog)
+    {
+        if (worklog.UpdatedAt is { } updatedAt
+            && entry.SourceUpdatedAt is { } seen
+            && updatedAt <= seen)
+        {
+            return ReconcileOutcome.Unchanged;
+        }
+
+        // The timestamp moved (or we have never recorded one). Only re-map if something we
+        // actually use moved with it — a bump on its own just gets recorded.
+        if (!HasMaterialDifference(entry, worklog))
+            return ReconcileOutcome.TimestampOnly;
+
+        return RefreshableStatuses.Contains(entry.Status)
+            ? ReconcileOutcome.Refresh
+            : ReconcileOutcome.BlockedBySubmission;
+    }
+
+    private static bool HasMaterialDifference(ImportedEntry entry, Dto.TempoWorklogDto worklog) =>
+        entry.TimeSpentSeconds != worklog.TimeSpentSeconds
+        || entry.Description != worklog.Description
+        || entry.WorkDate != DateOnly.Parse(worklog.StartDate)
+        || entry.UserEmail != (worklog.Author?.AccountId ?? "unknown");
+
+    private record Enrichment(string? ProjectKey, string? IssueKey, Dictionary<string, JsonElement>? CustomFields);
+
+    private async Task<Enrichment> EnrichAsync(Dto.TempoWorklogDto worklog, CancellationToken cancellationToken)
+    {
+        if (worklog.Issue?.Id is not > 0)
+            return new Enrichment(null, null, null);
+
+        try
+        {
+            var issue = await jiraClient.GetIssueAsync(worklog.Issue.Id, cancellationToken: cancellationToken);
+            return new Enrichment(issue.Fields?.Project?.Key, issue.Key, issue.Fields?.ExtensionData);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch Jira issue {IssueId} for worklog {WorklogId}",
+                worklog.Issue.Id, worklog.TempoWorklogId);
+            return new Enrichment(null, null, null);
+        }
+    }
+
+    private static void Apply(ImportedEntry entry, Dto.TempoWorklogDto worklog, Enrichment enrichment)
+    {
+        entry.UserEmail = worklog.Author?.AccountId ?? "unknown";
+        entry.WorkDate = DateOnly.Parse(worklog.StartDate);
+        entry.TimeSpentSeconds = worklog.TimeSpentSeconds;
+        entry.Description = worklog.Description;
+        entry.ProjectKey = enrichment.ProjectKey;
+        entry.IssueKey = enrichment.IssueKey;
+        entry.MetadataJson = BuildMetadataJson(worklog, enrichment.CustomFields);
+        entry.SourceUpdatedAt = worklog.UpdatedAt;
+    }
+
+    /// <summary>
+    /// Loads the entries matching the fetched worklogs, in chunks — a wide incremental pull can
+    /// return thousands of IDs, well past SQL Server's parameter ceiling for a single IN clause.
+    /// </summary>
+    private async Task<Dictionary<string, ImportedEntry>> LoadExistingAsync(
+        int importSourceId,
+        List<Dto.TempoWorklogDto> worklogs,
+        CancellationToken cancellationToken)
+    {
+        const int chunkSize = 500;
+        var ids = worklogs.Select(w => w.TempoWorklogId.ToString()).Distinct().ToList();
+        var found = new Dictionary<string, ImportedEntry>(ids.Count);
+
+        foreach (var chunk in ids.Chunk(chunkSize))
+        {
+            var rows = await db.ImportedEntries
+                .Where(e => e.ImportSourceId == importSourceId && chunk.Contains(e.ExternalId))
+                .ToListAsync(cancellationToken);
+
+            foreach (var row in rows)
+                found[row.ExternalId] = row;
+        }
+
+        return found;
     }
 
     // ------------------------------------------------------------------
@@ -139,6 +274,7 @@ public class TempoImportService(
         string apiToken,
         DateOnly from,
         DateOnly to,
+        DateTimeOffset? updatedFrom,
         CancellationToken cancellationToken)
     {
         // Build a per-call HttpClient with the source-specific token
@@ -150,10 +286,17 @@ public class TempoImportService(
         var all = new List<Dto.TempoWorklogDto>();
         int offset = 0;
 
+        // Tempo's docs claim updatedFrom cannot be combined with other parameters; verified
+        // against the tenant on 2026-09-03 that from/to *are* still applied alongside it.
+        var updatedFromParam = updatedFrom is null
+            ? ""
+            : $"&updatedFrom={updatedFrom.Value.UtcDateTime:yyyy-MM-ddTHH:mm:ss}Z";
+
         while (true)
         {
             var url = $"{tempoOptions.Value.BaseUrl}/worklogs" +
                       $"?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}" +
+                      updatedFromParam +
                       $"&offset={offset}&limit={limit}";
 
             var response = await client.GetAsync(url, cancellationToken);
@@ -184,6 +327,9 @@ public class TempoImportService(
             ["billableSeconds"] = worklog.BillableSeconds,
             ["startTime"] = worklog.StartTime,
         };
+
+        if (worklog.CreatedAt is { } createdAt)
+            meta["createdAt"] = createdAt.UtcDateTime.ToString("u");
 
         // Tempo work attributes (e.g. _WorkType_)
         if (worklog.Attributes?.Values is { Count: > 0 } attrs)

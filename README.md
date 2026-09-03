@@ -157,10 +157,68 @@ Optional: `description`, `projectkey`, `issuekey`, `activity`. Extra columns are
 
 Hangfire runs three recurring jobs (configured via `Hangfire:DailyPullCron`, default: daily at midnight):
 - **timelog-sync** — syncs projects and tasks from Timelog.com
-- **tempo-pull** — imports worklogs from Tempo for all enabled sources
+- **tempo-pull** — imports everything created or amended in Tempo since each source's last
+  successful poll, then applies mapping rules
 - **timelog-submit** — submits all mapped entries to Timelog.com
 
 Jobs can also be triggered manually from the UI.
+
+---
+
+## Tempo API notes
+
+Verified live against the tenant on 2026-09-03.
+
+### `from`/`to` filter the work date — not when the worklog was entered
+
+This is the trap that made the pull job lose hours. `GET /worklogs?from=&to=` filters on
+`startDate` (the day the work was performed). The old job queried
+`from=yesterday&to=yesterday` once per day, which meant **every work date was queried exactly
+once, ever** — at 06:00 UTC the following morning. Anything entered into Tempo for that date
+afterwards was never imported, never mapped and never submitted.
+
+Measured impact over a 90-day window: only ~52% of worklogs are created on the day the work
+happened. 266 of 567 worklogs were created after their one and only pull window. Manual range
+imports from `/sources` had been silently backfilling them.
+
+### `updatedFrom` is the fix
+
+`updatedFrom` filters on the system timestamp — when the worklog was entered or amended:
+
+```
+GET /worklogs?from=2026-06-05&to=2026-09-03&updatedFrom=2026-09-03T04:00:00Z&offset=0&limit=5000
+```
+
+- **Tempo's docs claim `updatedFrom` "does not work in conjunction with other parameters".
+  That is wrong for this tenant** — verified that `from`/`to` *are* still applied alongside it
+  (`updatedFrom=2026-08-01` alone → 192 worklogs; with `from=2026-09-01&to=2026-09-03` → 20,
+  all inside the window). So the work-date floor can stay in the query.
+- Accepts both `2026-08-25` and `2026-08-25T00:00:00`; the response echoes it normalised to
+  `2026-08-25T00:00:00Z`.
+- The watermark is `ImportSource.LastPolledAt`, minus `Tempo:WatermarkOverlapMinutes` (default
+  120) to cover clock skew and worklogs amended mid-pull. It is only advanced on a successful
+  fetch, so a failed run retries the same span. A null watermark (first ever poll) falls back to
+  a plain `Tempo:LookbackDays` window sweep.
+
+### The v4 worklog response carries `createdAt` and `updatedAt`
+
+Full field set: `tempoWorklogId, issue, timeSpentSeconds, billableSeconds, startDate,
+startTime, startDateTimeUtc, description, author, attributes, createdAt, updatedAt`.
+Note `author.displayName` was dropped in v4.
+
+`updatedAt` is persisted to `ImportedEntry.SourceUpdatedAt` and is authoritative for change
+detection: if it has not moved, the worklog is skipped without comparing fields. When it has
+moved and a field we use actually changed, the entry is refreshed in place and reset to
+`Pending` so mapping rules re-run.
+
+**Entries already submitted to Timelog are never rewritten.** An amendment to one of those is
+logged and counted as `ChangedAfterSubmission` for manual review — silently mutating our row
+would desync it from the registration already sitting in Timelog.
+
+### Deletions cannot be detected
+
+Tempo exposes no deleted-worklog feed ([T-I-2046](https://ideas.tempo.io/ideas/T-I-2046)), so a
+worklog deleted after submission leaves its hours standing in Timelog. Not currently handled.
 
 ---
 

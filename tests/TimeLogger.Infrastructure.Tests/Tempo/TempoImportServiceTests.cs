@@ -21,6 +21,13 @@ public class TempoImportServiceTests : IDisposable
     private readonly Mock<IJiraApiClient> _jiraMock;
     private readonly TempoImportService _sut;
     private readonly Mock<HttpMessageHandler> _httpHandlerMock;
+    private readonly List<string> _requestUrls = [];
+    private readonly TempoOptions _tempoOptions = new()
+    {
+        BaseUrl = "https://api.tempo.io/4",
+        LookbackDays = 90,
+        WatermarkOverlapMinutes = 120,
+    };
     private ImportSource _source = null!;
 
     public TempoImportServiceTests()
@@ -33,13 +40,12 @@ public class TempoImportServiceTests : IDisposable
         _httpHandlerMock = new Mock<HttpMessageHandler>(MockBehavior.Strict);
 
         var factory = CreateHttpClientFactory(_httpHandlerMock);
-        var tempoOptions = Options.Create(new TempoOptions { BaseUrl = "https://api.tempo.io/4" });
 
         _sut = new TempoImportService(
             factory,
             _jiraMock.Object,
             _db,
-            tempoOptions,
+            Options.Create(_tempoOptions),
             NullLogger<TempoImportService>.Instance);
     }
 
@@ -79,22 +85,44 @@ public class TempoImportServiceTests : IDisposable
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                _requestUrls.Add(req.RequestUri!.ToString()))
+            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(payload)),
             });
     }
 
-    private static TempoWorklogDto MakeWorklog(long id, long issueId = 100, int seconds = 3600) =>
+    private void SetupTempoFailure()
+    {
+        _httpHandlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Tempo unreachable"));
+    }
+
+    private static TempoWorklogDto MakeWorklog(
+        long id,
+        long issueId = 100,
+        int seconds = 3600,
+        string startDate = "2024-03-15",
+        string? description = null,
+        DateTimeOffset? updatedAt = null,
+        DateTimeOffset? createdAt = null) =>
         new()
         {
             TempoWorklogId = id,
             TimeSpentSeconds = seconds,
             BillableSeconds = seconds,
-            StartDate = "2024-03-15",
-            Description = $"Work on issue {issueId}",
+            StartDate = startDate,
+            Description = description ?? $"Work on issue {issueId}",
             Author = new TempoAuthor { AccountId = "user-account-123" },
             Issue = new TempoIssueRef { Id = issueId },
+            CreatedAt = createdAt,
+            UpdatedAt = updatedAt,
         };
 
     private void SetupJiraIssue(long issueId, string key, string projectKey,
@@ -259,7 +287,7 @@ public class TempoImportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ImportYesterdayAsync_OnlyImportsFromEnabledSources()
+    public async Task ImportIncrementalAsync_OnlyImportsFromEnabledSources()
     {
         var enabled = new ImportSource
         {
@@ -280,7 +308,7 @@ public class TempoImportServiceTests : IDisposable
 
         SetupTempoResponse([]);
 
-        await _sut.ImportYesterdayAsync();
+        await _sut.ImportIncrementalAsync();
 
         // Disabled source should never trigger a Tempo HTTP call for its entries
         // (enabled source makes one call returning 0 results)
@@ -289,6 +317,221 @@ public class TempoImportServiceTests : IDisposable
             Times.Once(),
             ItExpr.IsAny<HttpRequestMessage>(),
             ItExpr.IsAny<CancellationToken>());
+    }
+
+    // ------------------------------------------------------------------
+    // Incremental pull (TL-102) — back-dated worklogs and amendments
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportIncrementalAsync_SendsUpdatedFromDerivedFromWatermark()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero);
+        await _db.SaveChangesAsync();
+
+        SetupTempoResponse([]);
+
+        await _sut.ImportIncrementalAsync();
+
+        var url = Assert.Single(_requestUrls);
+        // 12:00 minus the 120-minute overlap
+        Assert.Contains("updatedFrom=2026-09-03T10:00:00Z", url);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_OmitsUpdatedFromOnFirstRun()
+    {
+        var source = await SeedSourceAsync();
+        Assert.Null(source.LastPolledAt);
+
+        SetupTempoResponse([]);
+
+        await _sut.ImportIncrementalAsync();
+
+        var url = Assert.Single(_requestUrls);
+        Assert.DoesNotContain("updatedFrom", url);
+        Assert.Contains("from=", url);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_BoundsWorkDatesByLookbackDays()
+    {
+        _tempoOptions.LookbackDays = 30;
+        await SeedSourceAsync();
+        SetupTempoResponse([]);
+
+        await _sut.ImportIncrementalAsync();
+
+        var expectedFrom = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-30);
+        Assert.Contains($"from={expectedFrom:yyyy-MM-dd}", Assert.Single(_requestUrls));
+    }
+
+    /// <summary>
+    /// The regression this whole change exists for: a worklog reported today for a work date
+    /// weeks ago must still be imported. The old "yesterday only" pull could never see it.
+    /// </summary>
+    [Fact]
+    public async Task ImportIncrementalAsync_ImportsBackDatedWorklog()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        await _db.SaveChangesAsync();
+
+        var workDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-20);
+        SetupTempoResponse([MakeWorklog(
+            77,
+            issueId: 500,
+            startDate: workDate.ToString("yyyy-MM-dd"),
+            createdAt: DateTimeOffset.UtcNow,
+            updatedAt: DateTimeOffset.UtcNow)]);
+        SetupJiraIssue(500, "OLD-1", "OLD");
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(1, result.Imported);
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal("77", entry.ExternalId);
+        Assert.Equal(workDate, entry.WorkDate);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_RefreshesAmendedEntryAndResetsForRemapping()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        _db.ImportedEntries.Add(new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = "5",
+            UserEmail = "user-account-123",
+            WorkDate = new DateOnly(2024, 3, 15),
+            TimeSpentSeconds = 3600,
+            Description = "Work on issue 100",
+            Status = ImportStatus.Mapped,
+            TimelogTaskId = null,
+            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+        });
+        await _db.SaveChangesAsync();
+
+        SetupTempoResponse([MakeWorklog(5, seconds: 18000, updatedAt: DateTimeOffset.UtcNow)]);
+        SetupJiraIssue(100, "PROJ-1", "PROJ");
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(0, result.Imported);
+        Assert.Equal(1, result.Refreshed);
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(18000, entry.TimeSpentSeconds);
+        Assert.Equal(ImportStatus.Pending, entry.Status);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_LeavesAlreadySubmittedEntryUntouched()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        _db.ImportedEntries.Add(new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = "6",
+            UserEmail = "user-account-123",
+            WorkDate = new DateOnly(2024, 3, 15),
+            TimeSpentSeconds = 3600,
+            Description = "Work on issue 100",
+            Status = ImportStatus.Submitted,
+            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+        });
+        await _db.SaveChangesAsync();
+
+        SetupTempoResponse([MakeWorklog(6, seconds: 7200, updatedAt: DateTimeOffset.UtcNow)]);
+        SetupJiraIssue(100, "PROJ-1", "PROJ");
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(1, result.ChangedAfterSubmission);
+        Assert.Equal(0, result.Refreshed);
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(3600, entry.TimeSpentSeconds);            // not rewritten
+        Assert.Equal(ImportStatus.Submitted, entry.Status);     // not re-queued
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_SkipsWorklogWhoseUpdatedAtHasNotMoved()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        var seen = new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero);
+        _db.ImportedEntries.Add(new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = "7",
+            UserEmail = "user-account-123",
+            WorkDate = new DateOnly(2024, 3, 15),
+            TimeSpentSeconds = 3600,
+            Description = "Work on issue 100",
+            Status = ImportStatus.Mapped,
+            SourceUpdatedAt = seen,
+        });
+        await _db.SaveChangesAsync();
+
+        SetupTempoResponse([MakeWorklog(7, seconds: 99999, updatedAt: seen)]);
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(0, result.Imported);
+        Assert.Equal(0, result.Refreshed);
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(3600, entry.TimeSpentSeconds);         // Tempo's timestamp is authoritative
+        Assert.Equal(ImportStatus.Mapped, entry.Status);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_AdvancesWatermarkOnSuccess()
+    {
+        var source = await SeedSourceAsync();
+        var before = DateTimeOffset.UtcNow.AddDays(-1);
+        source.LastPolledAt = before;
+        await _db.SaveChangesAsync();
+
+        SetupTempoResponse([]);
+
+        await _sut.ImportIncrementalAsync();
+
+        var reloaded = await _db.ImportSources.SingleAsync(s => s.Id == source.Id);
+        Assert.NotNull(reloaded.LastPolledAt);
+        Assert.True(reloaded.LastPolledAt > before);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_KeepsWatermarkWhenFetchFails()
+    {
+        var source = await SeedSourceAsync();
+        var before = new DateTimeOffset(2026, 9, 1, 6, 0, 0, TimeSpan.Zero);
+        source.LastPolledAt = before;
+        await _db.SaveChangesAsync();
+
+        SetupTempoFailure();
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(0, result.Imported);
+        var reloaded = await _db.ImportSources.SingleAsync(s => s.Id == source.Id);
+        Assert.Equal(before, reloaded.LastPolledAt);   // next run retries the same span
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_RecordsUpdatedAtOnImport()
+    {
+        var source = await SeedSourceAsync();
+        var updated = new DateTimeOffset(2026, 9, 2, 9, 30, 0, TimeSpan.Zero);
+        SetupTempoResponse([MakeWorklog(8, issueId: 100, updatedAt: updated, createdAt: updated)]);
+        SetupJiraIssue(100, "PROJ-1", "PROJ");
+
+        await _sut.ImportIncrementalAsync();
+
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(updated, entry.SourceUpdatedAt);
     }
 
     public void Dispose() => _db.Dispose();

@@ -30,6 +30,14 @@ public class TempoWorklogDto
 
     [JsonPropertyName("attributes")]
     public TempoAttributes? Attributes { get; set; }
+
+    /// <summary>When the worklog was first entered in Tempo (system timestamp, not the work date).</summary>
+    [JsonPropertyName("createdAt")]
+    public DateTimeOffset? CreatedAt { get; set; }
+
+    /// <summary>When the worklog was last amended in Tempo. Drives incremental pulls and change detection.</summary>
+    [JsonPropertyName("updatedAt")]
+    public DateTimeOffset? UpdatedAt { get; set; }
 }
 
 public class TempoIssueRef

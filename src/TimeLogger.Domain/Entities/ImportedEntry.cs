@@ -32,6 +32,13 @@ public class ImportedEntry
     public ImportStatus Status { get; set; } = ImportStatus.Pending;
     public DateTimeOffset ImportedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Last-modified timestamp reported by the source system (Tempo's <c>updatedAt</c>).
+    /// Used to detect that an already-imported entry was amended at the source.
+    /// Null for sources that expose no such timestamp (e.g. file uploads).
+    /// </summary>
+    public DateTimeOffset? SourceUpdatedAt { get; set; }
+
     public int? MappingRuleId { get; set; }
     public MappingRule? MappingRule { get; set; }
 

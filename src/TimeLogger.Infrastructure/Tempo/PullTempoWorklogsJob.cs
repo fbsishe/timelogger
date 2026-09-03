@@ -5,8 +5,9 @@ using TimeLogger.Application.Services;
 namespace TimeLogger.Infrastructure.Tempo;
 
 /// <summary>
-/// Hangfire recurring job — pulls yesterday's Tempo worklogs for all active sources
-/// and applies mapping rules. Submission is manual-only.
+/// Hangfire recurring job — pulls everything created or amended in Tempo since the last
+/// successful poll for all active sources, and applies mapping rules. Catching amendments
+/// and back-dated worklogs is the point: a work-date window alone misses both.
 /// </summary>
 public class PullTempoWorklogsJob(
     ITempoImportService importService,
@@ -22,9 +23,12 @@ public class PullTempoWorklogsJob(
 
         try
         {
-            await importService.ImportYesterdayAsync(cancellationToken);
+            var pull = await importService.ImportIncrementalAsync(cancellationToken);
             var mapped = await mappingService.ApplyAllPendingAsync(cancellationToken);
-            logger.LogInformation("PullTempoWorklogsJob completed — {Mapped} entries mapped", mapped);
+            logger.LogInformation(
+                "PullTempoWorklogsJob completed — {Imported} imported, {Refreshed} refreshed, "
+                + "{Mapped} entries mapped, {Blocked} amended after submission",
+                pull.Imported, pull.Refreshed, mapped, pull.ChangedAfterSubmission);
             await jobHealth.RecordSuccessAsync(JobId, cancellationToken);
         }
         catch (Exception ex)

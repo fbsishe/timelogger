@@ -33,6 +33,8 @@ services:
       Jira__ApiToken: "${Jira__ApiToken}"
       Tempo__BaseUrl: "${Tempo__BaseUrl}"
       Tempo__Token: "${Tempo__Token}"
+      Tempo__LookbackDays: "${Tempo__LookbackDays:-90}"
+      Tempo__WatermarkOverlapMinutes: "${Tempo__WatermarkOverlapMinutes:-120}"
       Hangfire__DashboardPassword: "${Hangfire__DashboardPassword}"
       AutoSubmit__Enabled: "${AutoSubmit__Enabled:-false}"
       AutoSubmit__SlackWebhookUrl: "${AutoSubmit__SlackWebhookUrl:-}"
