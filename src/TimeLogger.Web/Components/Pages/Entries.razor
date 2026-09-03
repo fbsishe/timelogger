@@ -16,6 +16,25 @@
 
 <MudText Typo="Typo.h4" Class="mb-4">All Entries</MudText>
 
+@if (_amendedCount > 0)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3"
+              Icon="@Icons.Material.Filled.EditNote">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudText Typo="Typo.body2">
+                <b>@_amendedCount</b>
+                @(_amendedCount == 1 ? " worklog was" : " worklogs were") changed in the source
+                <b>after</b> being submitted to Timelog. Timelog still holds the original hours —
+                these were not overwritten automatically.
+            </MudText>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                       OnClick="@(() => _statusFilter = AmendedFilter)">
+                Show @(_amendedCount == 1 ? "it" : "them")
+            </MudButton>
+        </MudStack>
+    </MudAlert>
+}
+
 <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3" Spacing="2">
     <MudChipSet T="string" SelectionMode="SelectionMode.SingleSelection"
                 SelectedValue="_statusFilter"
@@ -27,6 +46,11 @@
         <MudChip T="string" Value="@("Submitted")" Color="Color.Success">Submitted</MudChip>
         <MudChip T="string" Value="@("Conflict")" Color="Color.Warning">Conflict</MudChip>
         <MudChip T="string" Value="@("Ignored")" Color="Color.Default">Ignored</MudChip>
+        @if (_amendedCount > 0)
+        {
+            <MudChip T="string" Value="@AmendedFilter" Color="Color.Warning"
+                     Icon="@Icons.Material.Filled.EditNote">Amended (@_amendedCount)</MudChip>
+        }
     </MudChipSet>
     <MudSpacer />
     <MudButton Variant="Variant.Outlined" Size="Size.Small"
@@ -78,7 +102,16 @@ else
             <MudTd Style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 @context.Description
             </MudTd>
-            <MudTd>@context.Hours</MudTd>
+            <MudTd>
+                @context.Hours
+                @if (context.IsAmendedAfterSubmission)
+                {
+                    <MudTooltip Text="@AmendmentTooltip(context)">
+                        <MudIcon Icon="@Icons.Material.Filled.EditNote" Size="Size.Small"
+                                 Color="Color.Warning" Class="ml-1" />
+                    </MudTooltip>
+                }
+            </MudTd>
             <MudTd>
                 <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)">
                     @context.Status
@@ -94,6 +127,13 @@ else
                     <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Secondary"
                                OnClick="@(() => IgnoreAsync(context.Id))">
                         Ignore
+                    </MudButton>
+                }
+                @if (context.IsAmendedAfterSubmission)
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Warning"
+                               OnClick="@(() => AcknowledgeAmendmentAsync(context))">
+                        Acknowledge
                     </MudButton>
                 }
                 <MudIconButton Icon="@Icons.Material.Outlined.DataObject" Size="Size.Small"
@@ -422,9 +462,26 @@ else
     private List<EntryListItem> _allEntries = [];
     private int _totalCount;
     private string _statusFilter = "All";
+    private int _amendedCount;
 
-    private IEnumerable<EntryListItem> FilteredEntries =>
-        _statusFilter == "All" ? _allEntries : _allEntries.Where(e => e.Status == _statusFilter);
+    /// <summary>Pseudo-status: amendments cut across the real statuses.</summary>
+    private const string AmendedFilter = "Amended";
+
+    private IEnumerable<EntryListItem> FilteredEntries => _statusFilter switch
+    {
+        "All" => _allEntries,
+        AmendedFilter => _allEntries.Where(e => e.IsAmendedAfterSubmission),
+        var status => _allEntries.Where(e => e.Status == status),
+    };
+
+    private static string AmendmentTooltip(EntryListItem e)
+    {
+        var when = e.AmendedAfterSubmissionAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "unknown";
+        var delta = e.AmendedHoursDelta is { } d ? $" ({(d > 0 ? "+" : "")}{d:0.##}h)" : "";
+        return $"Changed in the source on {when} after we submitted it. "
+             + $"Submitted {e.Hours:0.##}h; source now says {e.AmendedSourceHours:0.##}h{delta}. "
+             + "Timelog still holds the submitted value.";
+    }
 
     private List<TimelogProjectSummary> _projects = [];
     private List<TimelogTaskSummary> _tasks = [];
@@ -480,6 +537,7 @@ else
         _loading = true;
         _allEntries = (await EntryService.GetAllAsync(1, 5000, _accountIdFilter)).ToList();
         _totalCount = await EntryService.GetTotalCountAsync(_accountIdFilter);
+        _amendedCount = await EntryService.GetAmendedAfterSubmissionCountAsync(_accountIdFilter);
         _projects = (await TimelogDataService.GetProjectsAsync()).ToList();
         _loading = false;
     }
@@ -515,6 +573,18 @@ else
     {
         await EntryService.IgnoreAsync(id);
         Snackbar.Add("Entry ignored.", Severity.Info);
+        await LoadAsync();
+    }
+
+    private async Task AcknowledgeAmendmentAsync(EntryListItem entry)
+    {
+        await EntryService.AcknowledgeAmendmentAsync(entry.Id);
+        Snackbar.Add($"Amendment acknowledged for {entry.WorkDate:yyyy-MM-dd}.", Severity.Success);
+
+        // Nothing is left to show under the pseudo-filter once the last one is cleared.
+        if (_statusFilter == AmendedFilter && _amendedCount <= 1)
+            _statusFilter = "All";
+
         await LoadAsync();
     }
 

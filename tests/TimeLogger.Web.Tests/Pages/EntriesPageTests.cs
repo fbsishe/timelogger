@@ -36,6 +36,9 @@ public class EntriesPageTests : BunitContext, IAsyncLifetime
         _entryServiceMock
             .Setup(s => s.GetTotalCountAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(0);
+        _entryServiceMock
+            .Setup(s => s.GetAmendedAfterSubmissionCountAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
         _timelogDataServiceMock
             .Setup(s => s.GetProjectsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
@@ -56,6 +59,63 @@ public class EntriesPageTests : BunitContext, IAsyncLifetime
     private static EntryListItem MakeEntry(int id, string description, string status = "Pending") =>
         new(id, $"w-{id}", "Tempo", new DateOnly(2026, 7, 1), 2.0,
             "PROJ", $"PROJ-{id}", description, "dev@example.com", status, null);
+
+    private static EntryListItem MakeAmendedEntry(int id, double sourceHours = 5.0) =>
+        new(id, $"w-{id}", "Tempo", new DateOnly(2026, 9, 2), 2.0,
+            "PROJ", $"PROJ-{id}", "Submitted then changed", "dev@example.com", "Submitted", null,
+            RawUserEmail: "dev@example.com",
+            AmendedAfterSubmissionAt: new DateTimeOffset(2026, 9, 3, 9, 0, 0, TimeSpan.Zero),
+            AmendedSourceHours: sourceHours,
+            AmendedSourceDescription: "Changed in Tempo");
+
+    private void SetupAmended(params EntryListItem[] entries)
+    {
+        _entryServiceMock
+            .Setup(s => s.GetAllAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(entries);
+        _entryServiceMock
+            .Setup(s => s.GetTotalCountAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(entries.Length);
+        _entryServiceMock
+            .Setup(s => s.GetAmendedAfterSubmissionCountAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(entries.Count(e => e.IsAmendedAfterSubmission));
+    }
+
+    [Fact]
+    public void ShowsAmendmentBanner_WhenWorklogsWereChangedAfterSubmission()
+    {
+        SetupAmended(MakeAmendedEntry(1));
+
+        var cut = Render<Entries>();
+
+        var markup = cut.Markup;
+        Assert.Contains("worklog was", markup);
+        Assert.Contains("after</b> being submitted to Timelog", markup);
+        Assert.Contains("Acknowledge", markup);
+    }
+
+    [Fact]
+    public void HidesAmendmentBanner_WhenNothingWasAmended()
+    {
+        SetupAmended(MakeEntry(1, "Ordinary work"));
+
+        var cut = Render<Entries>();
+
+        Assert.DoesNotContain("after</b> being submitted to Timelog", cut.Markup);
+        Assert.DoesNotContain("Acknowledge", cut.Markup);
+    }
+
+    [Fact]
+    public void AcknowledgeButton_CallsTheService()
+    {
+        SetupAmended(MakeAmendedEntry(7));
+        var cut = Render<Entries>();
+
+        cut.FindAll("button").First(b => b.TextContent.Contains("Acknowledge")).Click();
+
+        _entryServiceMock.Verify(
+            s => s.AcknowledgeAmendmentAsync(7, It.IsAny<CancellationToken>()), Times.Once);
+    }
 
     [Fact]
     public async Task ShowsEntries_WhenPresent()

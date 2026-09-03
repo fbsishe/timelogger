@@ -5,6 +5,18 @@ namespace TimeLogger.Infrastructure.Jobs;
 /// <summary>Hours one employee had submitted into one Timelog project during a run.</summary>
 public record SubmittedGroup(string Employee, string Project, int EntryCount, double Hours);
 
+/// <summary>
+/// A worklog the source amended after we had already pushed it to Timelog. Our row and the
+/// Timelog registration now disagree with the source, and only a human can decide which wins.
+/// </summary>
+public record AmendedAfterSubmission(
+    int EntryId,
+    string Employee,
+    DateOnly WorkDate,
+    string? IssueKey,
+    double SubmittedHours,
+    double SourceHours);
+
 /// <summary>Everything the Slack report needs, collected after an auto-submit run.</summary>
 public record AutoSubmitReportData(
     DateTimeOffset LocalRunTime,
@@ -15,7 +27,8 @@ public record AutoSubmitReportData(
     int ConflictCount,
     int PendingUnmappedCount,
     int NeedsTaskCount,
-    int NewEntriesSinceLastRun);
+    int NewEntriesSinceLastRun,
+    IReadOnlyList<AmendedAfterSubmission> NewlyAmended);
 
 /// <summary>Renders the auto-submit run report as Slack mrkdwn.</summary>
 public static class SubmissionReportBuilder
@@ -53,6 +66,30 @@ public static class SubmissionReportBuilder
             attention.Add($":grey_question: {data.PendingUnmappedCount} unmapped entr{(data.PendingUnmappedCount == 1 ? "y" : "ies")} waiting for a mapping rule");
         if (data.NeedsTaskCount > 0)
             attention.Add($":pushpin: {data.NeedsTaskCount} mapped entr{(data.NeedsTaskCount == 1 ? "y" : "ies")} missing a Timelog task");
+        if (data.NewlyAmended.Count > 0)
+        {
+            attention.Add(
+                $":pencil2: {data.NewlyAmended.Count} worklog{Plural(data.NewlyAmended.Count)} " +
+                $"amended in the source *after* we submitted {(data.NewlyAmended.Count == 1 ? "it" : "them")} " +
+                "to Timelog — Timelog still holds the old hours:");
+
+            foreach (var a in data.NewlyAmended
+                         .OrderBy(a => a.Employee)
+                         .ThenBy(a => a.WorkDate)
+                         .Take(MaxAmendmentsListed))
+            {
+                var delta = a.SourceHours - a.SubmittedHours;
+                var sign = delta > 0 ? "+" : "";
+                attention.Add(
+                    $"    ◦ {a.Employee}, {a.WorkDate:yyyy-MM-dd}" +
+                    (a.IssueKey is null ? "" : $" ({a.IssueKey})") +
+                    $": submitted {FormatHours(a.SubmittedHours)}, source now says " +
+                    $"{FormatHours(a.SourceHours)} ({sign}{FormatHours(delta)})");
+            }
+
+            if (data.NewlyAmended.Count > MaxAmendmentsListed)
+                attention.Add($"    ◦ …and {data.NewlyAmended.Count - MaxAmendmentsListed} more — see the Entries page");
+        }
 
         if (attention.Count > 0)
         {
@@ -67,6 +104,9 @@ public static class SubmissionReportBuilder
 
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>Keeps a bad day from posting a wall of Slack text.</summary>
+    private const int MaxAmendmentsListed = 10;
 
     private static string FormatHours(double hours) => $"{hours:0.##}h";
     private static string Plural(int count) => count == 1 ? "" : "s";

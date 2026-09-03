@@ -48,12 +48,18 @@ public class AutoSubmitReportJob(
             var anythingNew = newEntriesSinceLastRun > 0
                 || data.Submitted.Count > 0
                 || data.DuplicateCount > 0
-                || data.FailedCount > 0;
+                || data.FailedCount > 0
+                || data.NewlyAmended.Count > 0;
 
             if (ShouldSendReport(localNow, anythingNew))
             {
                 var sent = await slack.SendAsync(SubmissionReportBuilder.Build(data), cancellationToken);
                 logger.LogInformation("AutoSubmitReportJob report {Outcome}", sent ? "sent to Slack" : "NOT sent");
+
+                // Only stamp them once the report is genuinely out, so a failed webhook
+                // does not swallow the one mention each amendment gets.
+                if (sent && data.NewlyAmended.Count > 0)
+                    await MarkAmendmentsReportedAsync(data.NewlyAmended, cancellationToken);
             }
             else
             {
@@ -124,6 +130,30 @@ public class AutoSubmitReportJob(
 
         var failures = runSubmissions.Where(s => s.Status == SubmissionStatus.Failed).ToList();
 
+        // Amendments flagged by the Tempo pull that have not been announced yet.
+        var amendedRows = await db.ImportedEntries
+            .Where(e => e.AmendedAfterSubmissionAt != null && e.AmendmentReportedAt == null)
+            .OrderByDescending(e => e.AmendedAfterSubmissionAt)
+            .ToListAsync(ct);
+
+        var amendedNames = amendedRows.Count > 0
+            ? await db.EmployeeMappings
+                .Where(m => amendedRows.Select(e => e.UserEmail).Contains(m.AtlassianAccountId)
+                            && (m.DisplayName != null || m.TimelogUserDisplayName != null))
+                .ToDictionaryAsync(m => m.AtlassianAccountId,
+                                   m => (m.DisplayName ?? m.TimelogUserDisplayName)!, ct)
+            : [];
+
+        var newlyAmended = amendedRows
+            .Select(e => new AmendedAfterSubmission(
+                e.Id,
+                e.UserEmail is { } id && amendedNames.TryGetValue(id, out var n) ? n : e.UserEmail ?? "(unknown)",
+                e.WorkDate,
+                e.IssueKey,
+                Math.Round(e.TimeSpentSeconds / 3600.0, 2),
+                Math.Round((e.AmendedSourceSeconds ?? e.TimeSpentSeconds) / 3600.0, 2)))
+            .ToList();
+
         return new AutoSubmitReportData(
             LocalRunTime: localRunTime,
             Submitted: submitted,
@@ -134,7 +164,23 @@ public class AutoSubmitReportJob(
             PendingUnmappedCount: await db.ImportedEntries.CountAsync(e => e.Status == ImportStatus.Pending, ct),
             NeedsTaskCount: await db.ImportedEntries.CountAsync(
                 e => e.Status == ImportStatus.Mapped && e.TimelogTaskId == null, ct),
-            NewEntriesSinceLastRun: newEntriesSinceLastRun);
+            NewEntriesSinceLastRun: newEntriesSinceLastRun,
+            NewlyAmended: newlyAmended);
+    }
+
+    private async Task MarkAmendmentsReportedAsync(
+        IReadOnlyList<AmendedAfterSubmission> amendments,
+        CancellationToken ct)
+    {
+        var ids = amendments.Select(a => a.EntryId).ToList();
+        var rows = await db.ImportedEntries.Where(e => ids.Contains(e.Id)).ToListAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var row in rows)
+            row.AmendmentReportedAt = now;
+
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Marked {Count} amendment(s) as reported", rows.Count);
     }
 
     private TimeZoneInfo ResolveTimeZone()

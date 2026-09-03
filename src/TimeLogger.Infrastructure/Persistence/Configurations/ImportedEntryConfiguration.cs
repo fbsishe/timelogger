@@ -16,6 +16,10 @@ public class ImportedEntryConfiguration : IEntityTypeConfiguration<ImportedEntry
         builder.Property(x => x.IssueKey).HasMaxLength(100);
         builder.Property(x => x.Activity).HasMaxLength(200);
         builder.Property(x => x.MetadataJson).HasColumnType("nvarchar(max)");
+        builder.Property(x => x.AmendedSourceDescription).HasMaxLength(2000);
+
+        // Partial-ish lookup for the "amended after submission" banner and filter.
+        builder.HasIndex(x => x.AmendedAfterSubmissionAt);
 
         builder.HasIndex(x => new { x.ImportSourceId, x.ExternalId }).IsUnique();
 

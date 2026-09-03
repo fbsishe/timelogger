@@ -454,6 +454,109 @@ public class TempoImportServiceTests : IDisposable
         var entry = await _db.ImportedEntries.SingleAsync();
         Assert.Equal(3600, entry.TimeSpentSeconds);            // not rewritten
         Assert.Equal(ImportStatus.Submitted, entry.Status);     // not re-queued
+
+        // ...but the discrepancy is recorded for the UI and the Slack report
+        Assert.NotNull(entry.AmendedAfterSubmissionAt);
+        Assert.Equal(7200, entry.AmendedSourceSeconds);
+        Assert.Null(entry.AmendmentReportedAt);
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_DoesNotReAnnounceTheSameAmendment()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        var amendedAt = new DateTimeOffset(2026, 9, 2, 10, 0, 0, TimeSpan.Zero);
+        var reportedAt = new DateTimeOffset(2026, 9, 2, 11, 0, 0, TimeSpan.Zero);
+        _db.ImportedEntries.Add(new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = "20",
+            UserEmail = "user-account-123",
+            WorkDate = new DateOnly(2024, 3, 15),
+            TimeSpentSeconds = 3600,
+            Description = "Work on issue 100",
+            Status = ImportStatus.Submitted,
+            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+            AmendedAfterSubmissionAt = amendedAt,
+            AmendedSourceSeconds = 7200,
+            AmendmentReportedAt = reportedAt,
+        });
+        await _db.SaveChangesAsync();
+
+        // Same amendment timestamp as already flagged
+        SetupTempoResponse([MakeWorklog(20, seconds: 7200, updatedAt: amendedAt)]);
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(1, result.ChangedAfterSubmission);
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(reportedAt, entry.AmendmentReportedAt);   // stays reported, no second Slack mention
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_ReAnnouncesWhenAmendedAgain()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        _db.ImportedEntries.Add(new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = "21",
+            UserEmail = "user-account-123",
+            WorkDate = new DateOnly(2024, 3, 15),
+            TimeSpentSeconds = 3600,
+            Description = "Work on issue 100",
+            Status = ImportStatus.Submitted,
+            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+            AmendedAfterSubmissionAt = new DateTimeOffset(2026, 9, 2, 10, 0, 0, TimeSpan.Zero),
+            AmendedSourceSeconds = 7200,
+            AmendmentReportedAt = new DateTimeOffset(2026, 9, 2, 11, 0, 0, TimeSpan.Zero),
+        });
+        await _db.SaveChangesAsync();
+
+        var secondEdit = new DateTimeOffset(2026, 9, 3, 9, 0, 0, TimeSpan.Zero);
+        SetupTempoResponse([MakeWorklog(21, seconds: 10800, updatedAt: secondEdit)]);
+
+        await _sut.ImportIncrementalAsync();
+
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(secondEdit, entry.AmendedAfterSubmissionAt);
+        Assert.Equal(10800, entry.AmendedSourceSeconds);
+        Assert.Null(entry.AmendmentReportedAt);                 // queued for a fresh mention
+    }
+
+    [Fact]
+    public async Task ImportIncrementalAsync_ClearsAmendmentFlagWhenEntryIsRefreshable()
+    {
+        var source = await SeedSourceAsync();
+        source.LastPolledAt = DateTimeOffset.UtcNow.AddHours(-6);
+        _db.ImportedEntries.Add(new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = "22",
+            UserEmail = "user-account-123",
+            WorkDate = new DateOnly(2024, 3, 15),
+            TimeSpentSeconds = 3600,
+            Description = "Work on issue 100",
+            // Re-queued by hand after someone squared up Timelog, so it is writable again
+            Status = ImportStatus.Pending,
+            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+            AmendedAfterSubmissionAt = new DateTimeOffset(2026, 9, 2, 10, 0, 0, TimeSpan.Zero),
+            AmendedSourceSeconds = 7200,
+        });
+        await _db.SaveChangesAsync();
+
+        SetupTempoResponse([MakeWorklog(22, seconds: 7200, updatedAt: DateTimeOffset.UtcNow)]);
+        SetupJiraIssue(100, "PROJ-1", "PROJ");
+
+        var result = await _sut.ImportIncrementalAsync();
+
+        Assert.Equal(1, result.Refreshed);
+        var entry = await _db.ImportedEntries.SingleAsync();
+        Assert.Equal(7200, entry.TimeSpentSeconds);      // source value applied
+        Assert.Null(entry.AmendedAfterSubmissionAt);     // discrepancy is gone
+        Assert.Null(entry.AmendedSourceSeconds);
     }
 
     [Fact]

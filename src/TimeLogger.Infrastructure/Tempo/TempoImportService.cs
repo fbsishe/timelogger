@@ -112,7 +112,7 @@ public class TempoImportService(
 
         var existing = await LoadExistingAsync(source.Id, worklogs, cancellationToken);
 
-        int imported = 0, refreshed = 0, changedAfterSubmission = 0, unchanged = 0, touched = 0;
+        int imported = 0, refreshed = 0, changedAfterSubmission = 0, unchanged = 0, touched = 0, newlyAmended = 0;
 
         foreach (var worklog in worklogs)
         {
@@ -133,9 +133,21 @@ public class TempoImportService(
                         continue;
                     case ReconcileOutcome.BlockedBySubmission:
                         changedAfterSubmission++;
+                        // Flag it rather than rewrite it, and re-announce only when the
+                        // amendment itself is new (a second edit deserves a second mention).
+                        if (entry.AmendedAfterSubmissionAt != worklog.UpdatedAt)
+                        {
+                            entry.AmendedAfterSubmissionAt = worklog.UpdatedAt ?? DateTimeOffset.UtcNow;
+                            entry.AmendmentReportedAt = null;
+                            newlyAmended++;
+                        }
+                        entry.AmendedSourceSeconds = worklog.TimeSpentSeconds;
+                        entry.AmendedSourceDescription = worklog.Description;
+                        touched++;
+
                         logger.LogWarning(
                             "Tempo worklog {WorklogId} was amended after we submitted entry {EntryId} to Timelog "
-                            + "({OldHours:F2}h -> {NewHours:F2}h) — left untouched, needs manual review",
+                            + "({OldHours:F2}h -> {NewHours:F2}h) — left untouched, flagged for review",
                             worklog.TempoWorklogId, entry.Id,
                             entry.TimeSpentSeconds / 3600.0, worklog.TimeSpentSeconds / 3600.0);
                         continue;
@@ -145,6 +157,7 @@ public class TempoImportService(
                         // Re-run the mapping engine over the amended values.
                         entry.Status = ImportStatus.Pending;
                         entry.MappingRuleId = null;
+                        ClearAmendmentFlag(entry);
                         refreshed++;
                         continue;
                 }
@@ -171,8 +184,8 @@ public class TempoImportService(
 
         logger.LogInformation(
             "Imported {NewCount} new, refreshed {Refreshed}, skipped {Unchanged} unchanged, "
-            + "{Blocked} amended after submission",
-            imported, refreshed, unchanged, changedAfterSubmission);
+            + "{Blocked} amended after submission ({NewlyAmended} newly flagged)",
+            imported, refreshed, unchanged, changedAfterSubmission, newlyAmended);
 
         return new TempoImportResult(imported, refreshed, changedAfterSubmission);
     }
@@ -226,6 +239,15 @@ public class TempoImportService(
                 worklog.Issue.Id, worklog.TempoWorklogId);
             return new Enrichment(null, null, null);
         }
+    }
+
+    /// <summary>The entry now agrees with the source again, so any pending discrepancy is moot.</summary>
+    private static void ClearAmendmentFlag(ImportedEntry entry)
+    {
+        entry.AmendedAfterSubmissionAt = null;
+        entry.AmendedSourceSeconds = null;
+        entry.AmendedSourceDescription = null;
+        entry.AmendmentReportedAt = null;
     }
 
     private static void Apply(ImportedEntry entry, Dto.TempoWorklogDto worklog, Enrichment enrichment)

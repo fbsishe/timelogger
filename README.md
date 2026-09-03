@@ -211,9 +211,23 @@ detection: if it has not moved, the worklog is skipped without comparing fields.
 moved and a field we use actually changed, the entry is refreshed in place and reset to
 `Pending` so mapping rules re-run.
 
-**Entries already submitted to Timelog are never rewritten.** An amendment to one of those is
-logged and counted as `ChangedAfterSubmission` for manual review — silently mutating our row
-would desync it from the registration already sitting in Timelog.
+**Entries already submitted to Timelog are never rewritten.** Silently mutating our row would
+desync it from the registration already sitting in Timelog, so instead the discrepancy is
+recorded on the entry (`AmendedAfterSubmissionAt`, `AmendedSourceSeconds`,
+`AmendedSourceDescription`) and surfaced two ways:
+
+- **Entries page** — a warning banner with the count, an "Amended" filter chip, a per-row icon
+  whose tooltip spells out `submitted Xh, source now says Yh`, and an **Acknowledge** button.
+  Acknowledging clears the flag *and* records the source timestamp as seen, so the next pull
+  stops re-raising it. It deliberately does not change the entry or Timelog — squaring those up
+  is a human decision.
+- **Slack run report** — a "Needs attention" line per amendment with the hour delta, capped at
+  10 with an "…and N more" tail. Each amendment is mentioned once (`AmendmentReportedAt`), and
+  only stamped as reported when the webhook actually succeeded, so a failed post retries next
+  run. A second edit to the same worklog clears the stamp and earns a fresh mention.
+
+If a flagged entry is later re-queued by hand (back to Pending), the next pull applies the
+source values normally and clears the flag.
 
 ### Deletions cannot be detected
 

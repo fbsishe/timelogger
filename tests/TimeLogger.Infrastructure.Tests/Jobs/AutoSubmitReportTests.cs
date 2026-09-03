@@ -16,7 +16,8 @@ public class SubmissionReportBuilderTests
     private static AutoSubmitReportData MakeData(
         IReadOnlyList<SubmittedGroup>? submitted = null,
         int duplicates = 0, int failed = 0, string? firstError = null,
-        int conflicts = 0, int pending = 0, int needsTask = 0) =>
+        int conflicts = 0, int pending = 0, int needsTask = 0,
+        IReadOnlyList<AmendedAfterSubmission>? newlyAmended = null) =>
         new(
             LocalRunTime: new DateTimeOffset(2026, 7, 6, 8, 0, 0, TimeSpan.FromHours(3)),
             Submitted: submitted ?? [],
@@ -26,7 +27,55 @@ public class SubmissionReportBuilderTests
             ConflictCount: conflicts,
             PendingUnmappedCount: pending,
             NeedsTaskCount: needsTask,
-            NewEntriesSinceLastRun: 0);
+            NewEntriesSinceLastRun: 0,
+            NewlyAmended: newlyAmended ?? []);
+
+    [Fact]
+    public void Build_ListsAmendedWorklogsWithHourDelta()
+    {
+        var report = SubmissionReportBuilder.Build(MakeData(newlyAmended:
+        [
+            new AmendedAfterSubmission(1, "Jane Doe", new DateOnly(2026, 9, 2), "PROJ-7", 2.0, 5.0),
+        ]));
+
+        Assert.Contains("1 worklog amended in the source", report);
+        Assert.Contains("Jane Doe, 2026-09-02 (PROJ-7)", report);
+        Assert.Contains("submitted 2h, source now says 5h (+3h)", report);
+    }
+
+    [Fact]
+    public void Build_ShowsNegativeDeltaWhenSourceHoursWereReduced()
+    {
+        var report = SubmissionReportBuilder.Build(MakeData(newlyAmended:
+        [
+            new AmendedAfterSubmission(1, "Bob", new DateOnly(2026, 9, 2), null, 5.0, 1.5),
+        ]));
+
+        Assert.Contains("submitted 5h, source now says 1.5h (-3.5h)", report);
+        Assert.DoesNotContain("()", report);   // no empty issue-key parens
+    }
+
+    [Fact]
+    public void Build_TruncatesLongAmendmentListsWithACount()
+    {
+        var many = Enumerable.Range(1, 14)
+            .Select(i => new AmendedAfterSubmission(i, $"Person {i:00}", new DateOnly(2026, 9, 2), null, 1.0, 2.0))
+            .ToList();
+
+        var report = SubmissionReportBuilder.Build(MakeData(newlyAmended: many));
+
+        Assert.Contains("14 worklogs amended in the source", report);
+        Assert.Contains("and 4 more — see the Entries page", report);
+        Assert.Contains("Person 01", report);
+        Assert.DoesNotContain("Person 11", report);
+    }
+
+    [Fact]
+    public void Build_OmitsAmendmentSectionWhenThereAreNone()
+    {
+        var report = SubmissionReportBuilder.Build(MakeData());
+        Assert.DoesNotContain("amended in the source", report);
+    }
 
     [Fact]
     public void Build_ListsSubmittedHoursPerEmployeeAndProject()
@@ -147,6 +196,83 @@ public class AutoSubmitReportJobTests : IDisposable
             ImportedAt = importedAt,
         });
         await _db.SaveChangesAsync();
+    }
+
+    private async Task<ImportedEntry> SeedAmendedEntryAsync(DateTimeOffset? reportedAt = null)
+    {
+        var source = await _db.ImportSources.FirstOrDefaultAsync();
+        if (source is null)
+        {
+            source = new ImportSource { Name = "S", SourceType = SourceType.Tempo };
+            _db.ImportSources.Add(source);
+            await _db.SaveChangesAsync();
+        }
+
+        var entry = new ImportedEntry
+        {
+            ImportSourceId = source.Id,
+            ExternalId = Guid.NewGuid().ToString(),
+            UserEmail = "acc-1",
+            WorkDate = new DateOnly(2026, 9, 2),
+            IssueKey = "PROJ-7",
+            TimeSpentSeconds = 7200,
+            Status = ImportStatus.Submitted,
+            ImportedAt = DateTimeOffset.UtcNow.AddDays(-1),
+            AmendedAfterSubmissionAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            AmendedSourceSeconds = 18000,
+            AmendmentReportedAt = reportedAt,
+        };
+        _db.ImportedEntries.Add(entry);
+        await _db.SaveChangesAsync();
+        return entry;
+    }
+
+    [Fact]
+    public async Task Execute_UnreportedAmendment_SendsReportAndStampsIt()
+    {
+        var entry = await SeedAmendedEntryAsync();
+
+        await CreateSut().ExecuteAsync();
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("amended in the source")
+                               && t.Contains("submitted 2h, source now says 5h (+3h)")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        var reloaded = await _db.ImportedEntries.SingleAsync(e => e.Id == entry.Id);
+        Assert.NotNull(reloaded.AmendmentReportedAt);
+    }
+
+    [Fact]
+    public async Task Execute_AlreadyReportedAmendment_IsNotMentionedAgain()
+    {
+        await SeedAmendedEntryAsync(reportedAt: DateTimeOffset.UtcNow.AddHours(-2));
+        _db.JobExecutions.Add(new JobExecution
+        {
+            JobName = AutoSubmitReportJob.JobId,
+            ExecutedAt = DateTimeOffset.UtcNow.AddHours(-1),
+            Succeeded = true,
+        });
+        await _db.SaveChangesAsync();
+
+        await CreateSut().ExecuteAsync();
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("amended in the source")),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_SlackSendFails_LeavesAmendmentUnreportedForRetry()
+    {
+        var entry = await SeedAmendedEntryAsync();
+        _slackMock.Setup(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        await CreateSut().ExecuteAsync();
+
+        var reloaded = await _db.ImportedEntries.SingleAsync(e => e.Id == entry.Id);
+        Assert.Null(reloaded.AmendmentReportedAt);   // gets another chance next run
     }
 
     [Fact]

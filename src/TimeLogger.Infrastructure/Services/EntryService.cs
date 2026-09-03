@@ -81,6 +81,50 @@ public class EntryService(AppDbContext db) : IEntryService
         return await db.ImportedEntries.CountAsync(ct);
     }
 
+    public async Task<IReadOnlyList<EntryListItem>> GetAmendedAfterSubmissionAsync(
+        string? accountIdFilter = null, CancellationToken ct = default)
+    {
+        var query = db.ImportedEntries.Where(e => e.AmendedAfterSubmissionAt != null);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        var entries = await query
+            .Include(e => e.ImportSource)
+            .OrderByDescending(e => e.AmendedAfterSubmissionAt)
+            .ToListAsync(ct);
+
+        var mappings = await GetMappingLookupAsync(entries.Select(e => e.UserEmail), ct);
+        return entries.Select(e => ToListItem(e, mappings)).ToList();
+    }
+
+    public async Task<int> GetAmendedAfterSubmissionCountAsync(
+        string? accountIdFilter = null, CancellationToken ct = default)
+    {
+        var query = db.ImportedEntries.Where(e => e.AmendedAfterSubmissionAt != null);
+
+        if (accountIdFilter != null)
+            query = query.Where(e => e.UserEmail == accountIdFilter);
+
+        return await query.CountAsync(ct);
+    }
+
+    public async Task AcknowledgeAmendmentAsync(int entryId, CancellationToken ct = default)
+    {
+        var entry = await db.ImportedEntries.FindAsync([entryId], ct)
+            ?? throw new InvalidOperationException($"Entry {entryId} not found.");
+
+        // Record the source's timestamp as seen so the next pull does not re-raise this.
+        if (entry.AmendedAfterSubmissionAt is { } amendedAt)
+            entry.SourceUpdatedAt = amendedAt;
+
+        entry.AmendedAfterSubmissionAt = null;
+        entry.AmendedSourceSeconds = null;
+        entry.AmendedSourceDescription = null;
+        entry.AmendmentReportedAt = null;
+        await db.SaveChangesAsync(ct);
+    }
+
     private async Task<Dictionary<string, string>> GetMappingLookupAsync(
         IEnumerable<string?> userEmails, CancellationToken ct)
     {
@@ -104,6 +148,11 @@ public class EntryService(AppDbContext db) : IEntryService
         return new(e.Id, e.ExternalId, e.ImportSource != null ? e.ImportSource.Name : "Unknown",
             e.WorkDate, Math.Round(e.TimeSpentSeconds / 3600.0, 2),
             e.ProjectKey, e.IssueKey, e.Description, displayUser, e.Status.ToString(), e.MetadataJson,
-            RawUserEmail: e.UserEmail);
+            RawUserEmail: e.UserEmail,
+            AmendedAfterSubmissionAt: e.AmendedAfterSubmissionAt,
+            AmendedSourceHours: e.AmendedSourceSeconds is { } secs
+                ? Math.Round(secs / 3600.0, 2)
+                : null,
+            AmendedSourceDescription: e.AmendedSourceDescription);
     }
 }

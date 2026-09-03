@@ -39,6 +39,26 @@ public class ImportedEntry
     /// </summary>
     public DateTimeOffset? SourceUpdatedAt { get; set; }
 
+    /// <summary>
+    /// Set when the source reports this worklog as amended *after* we had already pushed it to
+    /// Timelog. We deliberately do not rewrite the entry in that case — the registration in
+    /// Timelog would silently disagree with ours — so the discrepancy is flagged here for a
+    /// human to resolve. Cleared by acknowledging it.
+    /// </summary>
+    public DateTimeOffset? AmendedAfterSubmissionAt { get; set; }
+
+    /// <summary>The source's current time spent, which we have NOT applied. Null unless amended.</summary>
+    public int? AmendedSourceSeconds { get; set; }
+
+    /// <summary>The source's current description, which we have NOT applied. Null unless amended.</summary>
+    public string? AmendedSourceDescription { get; set; }
+
+    /// <summary>
+    /// When this amendment was announced in the Slack run report. Keeps the report mentioning
+    /// each amendment once rather than on every run until someone acts on it.
+    /// </summary>
+    public DateTimeOffset? AmendmentReportedAt { get; set; }
+
     public int? MappingRuleId { get; set; }
     public MappingRule? MappingRule { get; set; }
 
