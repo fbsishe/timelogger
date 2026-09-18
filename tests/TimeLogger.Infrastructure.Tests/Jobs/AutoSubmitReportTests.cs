@@ -116,6 +116,26 @@ public class SubmissionReportBuilderTests
     }
 
     [Fact]
+    public void Build_LeadsWithFailedStepsAndDropsTheAllClear()
+    {
+        var report = SubmissionReportBuilder.Build(MakeData() with
+        {
+            StepFailures = [new StepFailure("Pull from Tempo", "HttpRequestException: 503")],
+        });
+
+        Assert.Contains("1 step failed — this run is incomplete", report);
+        Assert.Contains("Pull from Tempo: HttpRequestException: 503", report);
+        Assert.DoesNotContain("All clear", report);
+    }
+
+    [Fact]
+    public void Build_OmitsTheImportLineWhenNothingMoved()
+    {
+        var report = SubmissionReportBuilder.Build(MakeData() with { Import = new ImportSummary(0, 0, 0) });
+        Assert.DoesNotContain("Pulled", report);
+    }
+
+    [Fact]
     public void Build_MentionsDuplicates()
     {
         var report = SubmissionReportBuilder.Build(MakeData(duplicates: 2));
@@ -157,6 +177,8 @@ public class AutoSubmitShouldSendTests
 public class AutoSubmitReportJobTests : IDisposable
 {
     private readonly AppDbContext _db;
+    private readonly Mock<ITempoImportService> _importerMock = new();
+    private readonly Mock<IApplyMappingsService> _mapperMock = new();
     private readonly Mock<ITimelogSubmissionService> _submitterMock = new();
     private readonly Mock<IJobHealthService> _jobHealthMock = new();
     private readonly Mock<ISlackMessageSender> _slackMock = new();
@@ -168,10 +190,13 @@ public class AutoSubmitReportJobTests : IDisposable
             .Options;
         _db = new AppDbContext(options);
         _slackMock.Setup(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _importerMock.Setup(i => i.ImportIncrementalAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TempoImportResult(0, 0, 0));
     }
 
     private AutoSubmitReportJob CreateSut() =>
-        new(_db, _submitterMock.Object, _jobHealthMock.Object, _slackMock.Object,
+        new(_db, _importerMock.Object, _mapperMock.Object, _submitterMock.Object,
+            _jobHealthMock.Object, _slackMock.Object,
             Options.Create(new AutoSubmitOptions { TimeZone = "UTC" }),
             NullLogger<AutoSubmitReportJob>.Instance);
 
@@ -335,10 +360,108 @@ public class AutoSubmitReportJobTests : IDisposable
             .Setup(s => s.SubmitAllPendingAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => CreateSut().ExecuteAsync());
+        await Assert.ThrowsAsync<AutoSubmitStepFailedException>(() => CreateSut().ExecuteAsync());
 
         _jobHealthMock.Verify(h => h.RecordFailureAsync(
-            AutoSubmitReportJob.JobId, "boom", It.IsAny<CancellationToken>()), Times.Once);
+            AutoSubmitReportJob.JobId,
+            It.Is<string>(m => m.Contains("Submit to Timelog") && m.Contains("boom")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_RunsPullThenMapThenSubmit_InThatOrder()
+    {
+        var sequence = new List<string>();
+        _importerMock.Setup(i => i.ImportIncrementalAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => sequence.Add("pull"))
+            .ReturnsAsync(new TempoImportResult(2, 1, 0));
+        _mapperMock.Setup(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => sequence.Add("map"))
+            .ReturnsAsync(3);
+        _submitterMock.Setup(s => s.SubmitAllPendingAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => sequence.Add("submit"))
+            .Returns(Task.CompletedTask);
+
+        await CreateSut().ExecuteAsync();
+
+        Assert.Equal(["pull", "map", "submit"], sequence);
+        _jobHealthMock.Verify(h => h.RecordSuccessAsync(
+            AutoSubmitReportJob.JobId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_PullFails_StillMapsAndSubmits_AndReportsTheFailureToSlack()
+    {
+        _importerMock.Setup(i => i.ImportIncrementalAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("503 from Tempo"));
+
+        await Assert.ThrowsAsync<AutoSubmitStepFailedException>(() => CreateSut().ExecuteAsync());
+
+        _mapperMock.Verify(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _submitterMock.Verify(s => s.SubmitAllPendingAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("1 step failed")
+                               && t.Contains("Pull from Tempo")
+                               && t.Contains("503 from Tempo")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_StepFailure_SendsReportEvenWhenNothingIsNew()
+    {
+        // Off-peak run with nothing new — the report would normally be suppressed.
+        _db.JobExecutions.Add(new JobExecution
+        {
+            JobName = AutoSubmitReportJob.JobId,
+            ExecutedAt = DateTimeOffset.UtcNow.AddHours(-1),
+            Succeeded = true,
+        });
+        await _db.SaveChangesAsync();
+        _mapperMock.Setup(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("rule engine broke"));
+
+        await Assert.ThrowsAsync<AutoSubmitStepFailedException>(() => CreateSut().ExecuteAsync());
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("Apply mapping rules") && t.Contains("rule engine broke")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_AllStepsFail_NamesEachOneInASingleReport()
+    {
+        _importerMock.Setup(i => i.ImportIncrementalAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("tempo down"));
+        _mapperMock.Setup(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("mapping down"));
+        _submitterMock.Setup(s => s.SubmitAllPendingAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("timelog down"));
+
+        var ex = await Assert.ThrowsAsync<AutoSubmitStepFailedException>(() => CreateSut().ExecuteAsync());
+
+        Assert.Equal(3, ex.Failures.Count);
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("3 steps failed")
+                               && t.Contains("tempo down")
+                               && t.Contains("mapping down")
+                               && t.Contains("timelog down")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_ReportsWhatThePullAndMappingMoved()
+    {
+        _importerMock.Setup(i => i.ImportIncrementalAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TempoImportResult(4, 2, 0));
+        _mapperMock.Setup(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+        await SeedEntryAsync(ImportStatus.Pending, importedAt: DateTimeOffset.UtcNow);
+
+        await CreateSut().ExecuteAsync();
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("Pulled 4 new and refreshed 2 worklogs from the source; mapped 3")),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     public void Dispose() => _db.Dispose();

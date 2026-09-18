@@ -155,13 +155,30 @@ Optional: `description`, `projectkey`, `issuekey`, `activity`. Extra columns are
 
 ### Background Jobs
 
-Hangfire runs three recurring jobs (configured via `Hangfire:DailyPullCron`, default: daily at midnight):
+Every recurring job is scheduled in `AutoSubmit:TimeZone` (default `Europe/Vilnius`), not UTC —
+an unqualified cron would drift by an hour with the seasons and push the morning pull past the
+morning report.
+
+Daily jobs, configured via `Hangfire:DailyPullCron` (default `0 6 * * *`):
 - **timelog-sync** — syncs projects and tasks from Timelog.com
 - **tempo-pull** — imports everything created or amended in Tempo since each source's last
   successful poll, then applies mapping rules
-- **timelog-submit** — submits all mapped entries to Timelog.com
 
-Jobs can also be triggered manually from the UI.
+Scheduled through the day, opt-in via `AutoSubmit:Enabled`, on `AutoSubmit:Cron`
+(default `0 8,13,17 * * *`):
+- **timelog-auto-submit** — runs the whole chain on each slot: **pull → map → submit**, then
+  posts the run report to Slack. It owns the pull deliberately; when the import ran only once a
+  day, the 13:00 and 17:00 runs submitted whatever the 06:00 pull happened to catch and ignored
+  everything logged since, so same-day worklogs waited until the next morning.
+
+  The three steps are attempted independently — a Tempo outage does not stop entries mapped on
+  an earlier run from reaching Timelog. Every step that throws is named in the Slack report
+  (which is always sent when a step failed, even on an otherwise quiet run), recorded against
+  the job's health, and then rethrown so Hangfire retries the run.
+
+**timelog-submit** is not scheduled; it is enqueued on demand when submission is started from
+the UI. `Sync Now` on `/sources` enqueues **tempo-pull**, and `Import Range` imports a chosen
+date window directly.
 
 ---
 

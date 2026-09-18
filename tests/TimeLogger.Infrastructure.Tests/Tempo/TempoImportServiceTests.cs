@@ -477,7 +477,9 @@ public class TempoImportServiceTests : IDisposable
             TimeSpentSeconds = 3600,
             Description = "Work on issue 100",
             Status = ImportStatus.Submitted,
-            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+            // Anchored to the amendment, not to UtcNow: a relative watermark eventually
+            // overtakes these fixed dates and the pull dismisses the worklog as unchanged.
+            SourceUpdatedAt = amendedAt.AddDays(-2),
             AmendedAfterSubmissionAt = amendedAt,
             AmendedSourceSeconds = 7200,
             AmendmentReportedAt = reportedAt,
@@ -508,7 +510,8 @@ public class TempoImportServiceTests : IDisposable
             TimeSpentSeconds = 3600,
             Description = "Work on issue 100",
             Status = ImportStatus.Submitted,
-            SourceUpdatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+            // See above — must sit before the amendment timestamps, not before "now".
+            SourceUpdatedAt = new DateTimeOffset(2026, 8, 31, 0, 0, 0, TimeSpan.Zero),
             AmendedAfterSubmissionAt = new DateTimeOffset(2026, 9, 2, 10, 0, 0, TimeSpan.Zero),
             AmendedSourceSeconds = 7200,
             AmendmentReportedAt = new DateTimeOffset(2026, 9, 2, 11, 0, 0, TimeSpan.Zero),

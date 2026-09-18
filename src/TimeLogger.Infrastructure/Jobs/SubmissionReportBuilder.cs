@@ -17,6 +17,15 @@ public record AmendedAfterSubmission(
     double SubmittedHours,
     double SourceHours);
 
+/// <summary>
+/// A step of the auto-submit run that threw. The run carries on with the remaining steps,
+/// so the report has to say which part of it did not happen.
+/// </summary>
+public record StepFailure(string Step, string Error);
+
+/// <summary>What the pull and mapping steps moved before submission ran.</summary>
+public record ImportSummary(int Imported, int Refreshed, int Mapped);
+
 /// <summary>Everything the Slack report needs, collected after an auto-submit run.</summary>
 public record AutoSubmitReportData(
     DateTimeOffset LocalRunTime,
@@ -28,7 +37,9 @@ public record AutoSubmitReportData(
     int PendingUnmappedCount,
     int NeedsTaskCount,
     int NewEntriesSinceLastRun,
-    IReadOnlyList<AmendedAfterSubmission> NewlyAmended);
+    IReadOnlyList<AmendedAfterSubmission> NewlyAmended,
+    ImportSummary? Import = null,
+    IReadOnlyList<StepFailure>? StepFailures = null);
 
 /// <summary>Renders the auto-submit run report as Slack mrkdwn.</summary>
 public static class SubmissionReportBuilder
@@ -39,6 +50,21 @@ public static class SubmissionReportBuilder
         sb.Append(":stopwatch: *TimeLogger auto-submit — ")
           .Append(data.LocalRunTime.ToString("ddd dd MMM, HH:mm"))
           .AppendLine("*");
+
+        var stepFailures = data.StepFailures ?? [];
+        if (stepFailures.Count > 0)
+        {
+            sb.AppendLine($":rotating_light: *{stepFailures.Count} step{Plural(stepFailures.Count)} failed — this run is incomplete:*");
+            foreach (var failure in stepFailures)
+                sb.AppendLine($"• {failure.Step}: {Truncate(failure.Error, 200)}");
+        }
+
+        if (data.Import is { } import && (import.Imported > 0 || import.Refreshed > 0 || import.Mapped > 0))
+        {
+            sb.AppendLine(
+                $"_Pulled {import.Imported} new and refreshed {import.Refreshed} worklog{Plural(import.Refreshed)} " +
+                $"from the source; mapped {import.Mapped}._");
+        }
 
         if (data.Submitted.Count > 0)
         {
@@ -97,7 +123,7 @@ public static class SubmissionReportBuilder
             foreach (var line in attention)
                 sb.AppendLine($"• {line}");
         }
-        else if (data.Submitted.Count == 0 && data.DuplicateCount == 0)
+        else if (data.Submitted.Count == 0 && data.DuplicateCount == 0 && stepFailures.Count == 0)
         {
             sb.AppendLine(":white_check_mark: All clear — nothing needs handling.");
         }

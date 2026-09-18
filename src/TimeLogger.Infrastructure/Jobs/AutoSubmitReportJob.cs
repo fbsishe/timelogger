@@ -9,13 +9,24 @@ using TimeLogger.Infrastructure.Persistence;
 namespace TimeLogger.Infrastructure.Jobs;
 
 /// <summary>
-/// Hangfire recurring job (production only, AutoSubmit:Enabled) — submits all
-/// non-problematic mapped entries to Timelog, then posts a run report to Slack.
-/// Conflicting or unmapped entries are never auto-pushed; they are surfaced in
-/// the report's "needs attention" section instead.
+/// Hangfire recurring job (production only, AutoSubmit:Enabled) — runs the whole chain on
+/// every scheduled slot: pull worklogs from the source, apply mapping rules, submit all
+/// non-problematic mapped entries to Timelog, then post a run report to Slack. Owning the
+/// pull is the point: on a daily-only import, the 13:00 and 17:00 runs submitted whatever
+/// the 06:00 pull happened to catch and silently ignored everything logged since.
+///
+/// The three steps are independent enough to be worth attempting individually — a Tempo
+/// outage should not stop entries mapped on an earlier run from reaching Timelog — so each
+/// one is guarded separately, every failure is named in the Slack report, and the run is
+/// still recorded as failed so the dashboard and the failure notifier both see it.
+///
+/// Conflicting or unmapped entries are never auto-pushed; they are surfaced in the
+/// report's "needs attention" section instead.
 /// </summary>
 public class AutoSubmitReportJob(
     AppDbContext db,
+    ITempoImportService importService,
+    IApplyMappingsService mappingService,
     ITimelogSubmissionService submissionService,
     IJobHealthService jobHealth,
     ISlackMessageSender slack,
@@ -24,10 +35,16 @@ public class AutoSubmitReportJob(
 {
     public const string JobId = "timelog-auto-submit";
 
+    private const string PullStep = "Pull from Tempo";
+    private const string MapStep = "Apply mapping rules";
+    private const string SubmitStep = "Submit to Timelog";
+
     public async Task ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var runStartUtc = DateTimeOffset.UtcNow;
         logger.LogInformation("AutoSubmitReportJob started at {Time}", runStartUtc);
+
+        var failures = new List<StepFailure>();
 
         try
         {
@@ -37,13 +54,26 @@ public class AutoSubmitReportJob(
                 .Select(e => (DateTimeOffset?)e.ExecutedAt)
                 .FirstOrDefaultAsync(cancellationToken);
 
+            // 1. Pull — everything created or amended in the source since its last poll.
+            var pull = await RunStepAsync(
+                PullStep, () => importService.ImportIncrementalAsync(cancellationToken), failures);
+
+            // 2. Map — turn what we just pulled (plus anything still pending) into mapped entries.
+            var mapped = await RunStepAsync(
+                MapStep, () => mappingService.ApplyAllPendingAsync(cancellationToken), failures);
+
+            // Counted after the pull so entries this run imported are "new since the last run".
             var newEntriesSinceLastRun = await db.ImportedEntries
                 .CountAsync(e => e.ImportedAt > (lastRunUtc ?? DateTimeOffset.MinValue), cancellationToken);
 
-            await submissionService.SubmitAllPendingAsync(cancellationToken);
+            // 3. Submit — push the mapped, non-problematic entries to Timelog.
+            await RunStepAsync(
+                SubmitStep, () => submissionService.SubmitAllPendingAsync(cancellationToken), failures);
 
+            var import = new ImportSummary(pull?.Imported ?? 0, pull?.Refreshed ?? 0, mapped);
             var localNow = TimeZoneInfo.ConvertTime(runStartUtc, ResolveTimeZone());
-            var data = await CollectReportDataAsync(runStartUtc, localNow, newEntriesSinceLastRun, cancellationToken);
+            var data = await CollectReportDataAsync(
+                runStartUtc, localNow, newEntriesSinceLastRun, import, failures, cancellationToken);
 
             var anythingNew = newEntriesSinceLastRun > 0
                 || data.Submitted.Count > 0
@@ -51,7 +81,7 @@ public class AutoSubmitReportJob(
                 || data.FailedCount > 0
                 || data.NewlyAmended.Count > 0;
 
-            if (ShouldSendReport(localNow, anythingNew))
+            if (ShouldSendReport(localNow, anythingNew, failures.Count > 0))
             {
                 var sent = await slack.SendAsync(SubmissionReportBuilder.Build(data), cancellationToken);
                 logger.LogInformation("AutoSubmitReportJob report {Outcome}", sent ? "sent to Slack" : "NOT sent");
@@ -66,10 +96,24 @@ public class AutoSubmitReportJob(
                 logger.LogInformation("AutoSubmitReportJob: nothing new — report suppressed for this run");
             }
 
+            if (failures.Count > 0)
+            {
+                // Reported to Slack above; record it here so the health dashboard and the
+                // failure notifier see it too, then surface it to Hangfire for a retry.
+                await jobHealth.RecordFailureAsync(JobId, DescribeFailures(failures), cancellationToken);
+                throw new AutoSubmitStepFailedException(failures);
+            }
+
             await jobHealth.RecordSuccessAsync(JobId, cancellationToken);
+        }
+        catch (AutoSubmitStepFailedException)
+        {
+            throw;   // already reported and recorded
         }
         catch (Exception ex)
         {
+            // Something outside the three steps broke (reporting, the DB). The steps have no
+            // say in this one, so Slack only hears about it through the failure notifier.
             logger.LogError(ex, "AutoSubmitReportJob failed");
             await jobHealth.RecordFailureAsync(JobId, ex.Message, cancellationToken);
             throw;
@@ -77,11 +121,37 @@ public class AutoSubmitReportJob(
     }
 
     /// <summary>
-    /// The 08:00 weekday run is an always-on heartbeat; every other run
-    /// (13:00, 17:00, weekends) only reports when something new happened.
+    /// Runs one step, recording rather than propagating its failure so the remaining steps
+    /// still get their turn. Returns default(T) when the step threw.
     /// </summary>
-    public static bool ShouldSendReport(DateTimeOffset localNow, bool anythingNew)
+    private async Task<T?> RunStepAsync<T>(string step, Func<Task<T>> action, List<StepFailure> failures)
     {
+        try
+        {
+            return await action();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "AutoSubmitReportJob step '{Step}' failed", step);
+            failures.Add(new StepFailure(step, $"{ex.GetType().Name}: {ex.Message}"));
+            return default;
+        }
+    }
+
+    private async Task RunStepAsync(string step, Func<Task> action, List<StepFailure> failures) =>
+        await RunStepAsync<object?>(step, async () => { await action(); return null; }, failures);
+
+    private static string DescribeFailures(IReadOnlyList<StepFailure> failures) =>
+        string.Join(" | ", failures.Select(f => $"{f.Step}: {f.Error}"));
+
+    /// <summary>
+    /// The 08:00 weekday run is an always-on heartbeat; every other run
+    /// (13:00, 17:00, weekends) only reports when something new happened —
+    /// or when a step failed, which is always worth saying out loud.
+    /// </summary>
+    public static bool ShouldSendReport(DateTimeOffset localNow, bool anythingNew, bool hasFailures = false)
+    {
+        if (hasFailures) return true;
         var isWeekday = localNow.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
         return (isWeekday && localNow.Hour == 8) || anythingNew;
     }
@@ -90,6 +160,8 @@ public class AutoSubmitReportJob(
         DateTimeOffset runStartUtc,
         DateTimeOffset localRunTime,
         int newEntriesSinceLastRun,
+        ImportSummary import,
+        IReadOnlyList<StepFailure> stepFailures,
         CancellationToken ct)
     {
         var runSubmissions = await db.SubmittedEntries
@@ -165,7 +237,9 @@ public class AutoSubmitReportJob(
             NeedsTaskCount: await db.ImportedEntries.CountAsync(
                 e => e.Status == ImportStatus.Mapped && e.TimelogTaskId == null, ct),
             NewEntriesSinceLastRun: newEntriesSinceLastRun,
-            NewlyAmended: newlyAmended);
+            NewlyAmended: newlyAmended,
+            Import: import,
+            StepFailures: stepFailures);
     }
 
     private async Task MarkAmendmentsReportedAsync(
@@ -195,4 +269,15 @@ public class AutoSubmitReportJob(
             return TimeZoneInfo.Utc;
         }
     }
+}
+
+/// <summary>
+/// Thrown when one of the run's steps failed. Carries the failures purely so a caller can
+/// see them; the job has already reported and recorded them by the time this is thrown.
+/// </summary>
+public class AutoSubmitStepFailedException(IReadOnlyList<StepFailure> failures)
+    : Exception($"AutoSubmitReportJob: {failures.Count} step(s) failed — "
+                + string.Join(" | ", failures.Select(f => $"{f.Step}: {f.Error}")))
+{
+    public IReadOnlyList<StepFailure> Failures { get; } = failures;
 }

@@ -126,38 +126,47 @@ public static class DependencyInjection
     {
         var dailyCron = configuration["Hangfire:DailyPullCron"] ?? Cron.Daily();
 
+        var autoSubmit = configuration.GetSection(AutoSubmitOptions.SectionName).Get<AutoSubmitOptions>()
+            ?? new AutoSubmitOptions();
+
+        // Every recurring job shares one wall clock — the office's, from AutoSubmit:TimeZone.
+        // Without this, an unqualified cron is read as UTC and "06:00" silently drifts with
+        // the seasons, landing after the 08:00 report run for half the year.
+        TimeZoneInfo timeZone;
+        try
+        {
+            timeZone = TimeZoneInfo.FindSystemTimeZoneById(autoSubmit.TimeZone);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            timeZone = TimeZoneInfo.Utc;
+        }
+
+        var localTime = new RecurringJobOptions { TimeZone = timeZone };
+
         RecurringJob.AddOrUpdate<SyncTimelogDataJob>(
             SyncTimelogDataJob.JobId,
             job => job.ExecuteAsync(CancellationToken.None),
-            dailyCron);
+            dailyCron,
+            localTime);
 
         RecurringJob.AddOrUpdate<PullTempoWorklogsJob>(
             PullTempoWorklogsJob.JobId,
             job => job.ExecuteAsync(CancellationToken.None),
-            dailyCron);
+            dailyCron,
+            localTime);
 
-        // Scheduled auto-submission (TL-99) — opt-in via AutoSubmit:Enabled.
+        // Scheduled auto-submission (TL-99) — opt-in via AutoSubmit:Enabled. It runs the
+        // pull itself as its first step, so entries logged during the day reach Timelog on
+        // the same day instead of waiting for the next daily pull.
         // Manual submission from the UI stays available either way.
-        var autoSubmit = configuration.GetSection(AutoSubmitOptions.SectionName).Get<AutoSubmitOptions>()
-            ?? new AutoSubmitOptions();
-
         if (autoSubmit.Enabled)
         {
-            TimeZoneInfo timeZone;
-            try
-            {
-                timeZone = TimeZoneInfo.FindSystemTimeZoneById(autoSubmit.TimeZone);
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                timeZone = TimeZoneInfo.Utc;
-            }
-
             RecurringJob.AddOrUpdate<AutoSubmitReportJob>(
                 AutoSubmitReportJob.JobId,
                 job => job.ExecuteAsync(CancellationToken.None),
                 autoSubmit.Cron,
-                new RecurringJobOptions { TimeZone = timeZone });
+                localTime);
         }
         else
         {
