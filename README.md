@@ -166,9 +166,10 @@ Daily jobs, configured via `Hangfire:DailyPullCron` (default `0 6 * * *`):
 
 Scheduled through the day, opt-in via `AutoSubmit:Enabled`, on `AutoSubmit:Cron`
 (default `0 8,13,17 * * *`):
-- **timelog-auto-submit** — runs the whole chain on each slot: **pull → map → submit**. It owns the pull deliberately; when the import ran only once a
-  day, the 13:00 and 17:00 runs submitted whatever the 06:00 pull happened to catch and ignored
-  everything logged since, so same-day worklogs waited until the next morning.
+- **timelog-auto-submit** — runs the whole chain on each slot: **pull → map → submit**. It owns
+  the pull deliberately; when the import ran only once a day, the 13:00 and 17:00 runs submitted
+  whatever the 06:00 pull happened to catch and ignored everything logged since, so same-day
+  worklogs waited until the next morning.
 
   The three steps are attempted independently — a Tempo outage does not stop entries mapped on
   an earlier run from reaching Timelog. Every step that throws is named in Slack, recorded
@@ -176,11 +177,15 @@ Scheduled through the day, opt-in via `AutoSubmit:Enabled`, on `AutoSubmit:Cron`
 
   Slack messages go to `AutoSubmit:SlackWebhookUrl` (falling back to
   `Notifications:SlackWebhookUrl`); the webhook decides the channel. The job posts:
-  - **a daily digest on the `AutoSubmit:DigestHour` run** (default `8`) — everything submitted
-    during the previous local calendar day per employee and project, duplicates, rejected
-    submissions, source amendments made after submission, and the standing conflict /
-    unmapped / missing-task counts. Always sent on weekdays; on weekends only when there is
-    something in it.
+  - **a daily digest on the first run at or after `AutoSubmit:DigestHour`** (default `8`) —
+    everything submitted during the previous local calendar day per employee and project,
+    duplicates, rejected submissions, source amendments made after submission, and the
+    standing conflict / unmapped / missing-task counts. Always sent on weekdays; on weekends
+    only when there is something in it. Each digest is recorded in the `DigestReports` table,
+    so if the 08:00 run is missed (VM down, Hangfire retry after 09:00) or its webhook call
+    fails, the next run posts it instead; after several missed mornings one digest covers
+    every day since the last one, up to a week back. Keep `DigestHour` at or before the last
+    `Cron` slot.
   - **error alerts on every other run** — only when a step threw or Timelog rejected a
     submission. Successful daytime runs post nothing; their submissions appear in the next
     morning's digest.

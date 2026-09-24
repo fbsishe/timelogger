@@ -14,8 +14,9 @@ public class AutoSubmitOptions
     public string TimeZone { get; set; } = "Europe/Vilnius";
 
     /// <summary>
-    /// Local hour of the run that posts the daily digest of the previous day's submissions.
-    /// Must match one of the <see cref="Cron"/> slots; every other run only posts on errors.
+    /// Local hour from which the daily digest of the previous day's submissions is due. The
+    /// first run at or after it posts the digest — so a missed 08:00 run is caught up at 13:00 —
+    /// and every other run only posts on errors. Keep it at or before the last <see cref="Cron"/> slot.
     /// </summary>
     public int DigestHour { get; set; } = 8;
 

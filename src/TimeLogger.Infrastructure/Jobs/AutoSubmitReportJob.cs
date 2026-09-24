@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TimeLogger.Application.Interfaces;
 using TimeLogger.Application.Services;
 using TimeLogger.Domain;
+using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure.Persistence;
 
 namespace TimeLogger.Infrastructure.Jobs;
@@ -20,9 +21,12 @@ namespace TimeLogger.Infrastructure.Jobs;
 /// one is guarded separately, every failure is named in Slack, and the run is still
 /// recorded as failed so the dashboard and the failure notifier both see it.
 ///
-/// Slack only hears from the job twice over: the morning run (<see cref="AutoSubmitOptions.DigestHour"/>)
-/// posts a digest of everything submitted the previous day, and any other run posts only
-/// when a step threw or a submission was rejected. Successful daytime runs stay quiet.
+/// Slack only hears from the job twice over: the first run at or after
+/// <see cref="AutoSubmitOptions.DigestHour"/> posts a digest of everything submitted since the
+/// last digest (normally just yesterday), and any other run posts only when a step threw or a
+/// submission was rejected. Successful daytime runs stay quiet. Each digest is recorded in
+/// <see cref="DigestReport"/>, so a missed or failed morning run is caught up by the next run
+/// rather than silently dropping that day.
 ///
 /// Conflicting or unmapped entries are never auto-pushed; they are surfaced in the
 /// morning digest's "needs attention" section instead.
@@ -71,8 +75,13 @@ public class AutoSubmitReportJob(
             var timeZone = ResolveTimeZone();
             var localNow = TimeZoneInfo.ConvertTime(runStartUtc, timeZone);
 
-            if (IsDigestRun(localNow, options.Value.DigestHour))
-                await SendDailyDigestAsync(localNow, timeZone, failures, cancellationToken);
+            var lastDigestDay = await db.DigestReports
+                .OrderByDescending(d => d.ToDay)
+                .Select(d => (DateOnly?)d.ToDay)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (DigestPeriodDue(localNow, options.Value.DigestHour, lastDigestDay) is { } period)
+                await SendDigestAsync(localNow, period, timeZone, failures, cancellationToken);
             else
                 await SendErrorAlertAsync(runStartUtc, localNow, failures, cancellationToken);
 
@@ -124,8 +133,30 @@ public class AutoSubmitReportJob(
     private static string DescribeFailures(IReadOnlyList<StepFailure> failures) =>
         string.Join(" | ", failures.Select(f => $"{f.Step}: {f.Error}"));
 
-    /// <summary>The first run of the day is the one that posts the daily digest.</summary>
-    public static bool IsDigestRun(DateTimeOffset localNow, int digestHour) => localNow.Hour == digestHour;
+    /// <summary>
+    /// How many days a catch-up digest reaches back at most, so a long outage (or the very
+    /// first run) does not post a wall of history.
+    /// </summary>
+    public const int MaxCatchUpDays = 7;
+
+    /// <summary>
+    /// The days this run owes a digest for, or null when it owes none. A digest is due from
+    /// <paramref name="digestHour"/> onwards until one covering yesterday has been recorded, so
+    /// whichever run gets there first posts it — the 08:00 run normally, the 13:00 run when
+    /// 08:00 was missed. The period starts the day after the last digest, capped at
+    /// <see cref="MaxCatchUpDays"/>, and always ends yesterday.
+    /// </summary>
+    public static DigestPeriod? DigestPeriodDue(DateTimeOffset localNow, int digestHour, DateOnly? lastDigestDay)
+    {
+        if (localNow.Hour < digestHour) return null;
+
+        var yesterday = DateOnly.FromDateTime(localNow.DateTime).AddDays(-1);
+        if (lastDigestDay >= yesterday) return null;
+
+        var earliest = yesterday.AddDays(1 - MaxCatchUpDays);
+        var from = lastDigestDay is { } last ? last.AddDays(1) : yesterday;
+        return new DigestPeriod(from < earliest ? earliest : from, yesterday);
+    }
 
     /// <summary>
     /// The weekday digest is an always-on heartbeat; on weekends it is only posted when
@@ -139,23 +170,23 @@ public class AutoSubmitReportJob(
     }
 
     /// <summary>
-    /// Morning run: report everything that reached Timelog during the previous local calendar
-    /// day. Each entry has one audit row whose <c>SubmittedAt</c> moves with every attempt, so a
-    /// day window never counts an entry twice and a re-sent digest (a Hangfire retry) simply
-    /// repeats itself.
+    /// Report everything that reached Timelog during <paramref name="period"/> (local calendar
+    /// days). Each entry has one audit row whose <c>SubmittedAt</c> moves with every attempt, so
+    /// a day window never counts an entry twice. The period is recorded as covered once the
+    /// digest is out — or deliberately suppressed — so later runs today stay quiet; a failed
+    /// webhook records nothing, and the next run tries again.
     /// </summary>
-    private async Task SendDailyDigestAsync(
+    private async Task SendDigestAsync(
         DateTimeOffset localNow,
+        DigestPeriod period,
         TimeZoneInfo timeZone,
         IReadOnlyList<StepFailure> stepFailures,
         CancellationToken ct)
     {
-        var today = DateOnly.FromDateTime(localNow.DateTime);
-        var reportDay = today.AddDays(-1);
-        var dayStartUtc = LocalMidnightUtc(reportDay, timeZone);
-        var dayEndUtc = LocalMidnightUtc(today, timeZone);
+        var periodStartUtc = LocalMidnightUtc(period.From, timeZone);
+        var periodEndUtc = LocalMidnightUtc(period.To.AddDays(1), timeZone);
 
-        var data = await CollectDigestDataAsync(localNow, reportDay, dayStartUtc, dayEndUtc, stepFailures, ct);
+        var data = await CollectDigestDataAsync(localNow, period, periodStartUtc, periodEndUtc, stepFailures, ct);
 
         var anythingToReport = data.Submitted.Count > 0
             || data.DuplicateCount > 0
@@ -165,16 +196,28 @@ public class AutoSubmitReportJob(
         if (!ShouldSendDigest(localNow, anythingToReport, stepFailures.Count > 0))
         {
             logger.LogInformation("AutoSubmitReportJob: quiet weekend day — digest suppressed");
+            await RecordDigestAsync(period, posted: false, ct);
             return;
         }
 
         var sent = await slack.SendAsync(SubmissionReportBuilder.Build(data), ct);
-        logger.LogInformation("AutoSubmitReportJob digest {Outcome}", sent ? "sent to Slack" : "NOT sent");
+        logger.LogInformation("AutoSubmitReportJob digest for {From}–{To} {Outcome}",
+            period.From, period.To, sent ? "sent to Slack" : "NOT sent — the next run will retry");
+
+        if (!sent) return;
+
+        await RecordDigestAsync(period, posted: true, ct);
 
         // Only stamp them once the digest is genuinely out, so a failed webhook
         // does not swallow the one mention each amendment gets.
-        if (sent && data.NewlyAmended.Count > 0)
+        if (data.NewlyAmended.Count > 0)
             await MarkAmendmentsReportedAsync(data.NewlyAmended, ct);
+    }
+
+    private async Task RecordDigestAsync(DigestPeriod period, bool posted, CancellationToken ct)
+    {
+        db.DigestReports.Add(new DigestReport { FromDay = period.From, ToDay = period.To, Posted = posted });
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>Daytime run: say nothing unless a step threw or Timelog rejected a submission.</summary>
@@ -203,17 +246,17 @@ public class AutoSubmitReportJob(
 
     private async Task<AutoSubmitReportData> CollectDigestDataAsync(
         DateTimeOffset localRunTime,
-        DateOnly reportDay,
-        DateTimeOffset dayStartUtc,
-        DateTimeOffset dayEndUtc,
+        DigestPeriod period,
+        DateTimeOffset periodStartUtc,
+        DateTimeOffset periodEndUtc,
         IReadOnlyList<StepFailure> stepFailures,
         CancellationToken ct)
     {
         // Failures run up to now rather than to midnight: this morning's own rejections are
         // errors, and errors are never held back for tomorrow's digest.
         var daySubmissions = await db.SubmittedEntries
-            .Where(s => s.SubmittedAt >= dayStartUtc
-                        && (s.SubmittedAt < dayEndUtc || s.Status == SubmissionStatus.Failed))
+            .Where(s => s.SubmittedAt >= periodStartUtc
+                        && (s.SubmittedAt < periodEndUtc || s.Status == SubmissionStatus.Failed))
             .Include(s => s.ImportedEntry)
                 .ThenInclude(e => e.TimelogProject)
             .ToListAsync(ct);
@@ -275,7 +318,7 @@ public class AutoSubmitReportJob(
 
         return new AutoSubmitReportData(
             LocalRunTime: localRunTime,
-            ReportDay: reportDay,
+            Period: period,
             Submitted: submitted,
             DuplicateCount: daySubmissions.Count(s => s.Status == SubmissionStatus.Duplicate),
             FailedCount: failures.Count,

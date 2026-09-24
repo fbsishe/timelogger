@@ -2,7 +2,20 @@ using System.Text;
 
 namespace TimeLogger.Infrastructure.Jobs;
 
-/// <summary>Hours one employee had submitted into one Timelog project on the report day.</summary>
+/// <summary>
+/// The local calendar days one digest covers — normally just yesterday, longer when the
+/// digest is catching up after a missed morning run.
+/// </summary>
+public record DigestPeriod(DateOnly From, DateOnly To)
+{
+    public bool IsSingleDay => From == To;
+
+    public override string ToString() => IsSingleDay
+        ? To.ToString("ddd dd MMM")
+        : $"{From:ddd dd MMM} – {To:ddd dd MMM}";
+}
+
+/// <summary>Hours one employee had submitted into one Timelog project during the digest period.</summary>
 public record SubmittedGroup(string Employee, string Project, int EntryCount, double Hours);
 
 /// <summary>
@@ -23,10 +36,10 @@ public record AmendedAfterSubmission(
 /// </summary>
 public record StepFailure(string Step, string Error);
 
-/// <summary>Everything the morning digest needs: what reached Timelog on <see cref="ReportDay"/>.</summary>
+/// <summary>Everything the morning digest needs: what reached Timelog during <see cref="Period"/>.</summary>
 public record AutoSubmitReportData(
     DateTimeOffset LocalRunTime,
-    DateOnly ReportDay,
+    DigestPeriod Period,
     IReadOnlyList<SubmittedGroup> Submitted,
     int DuplicateCount,
     int FailedCount,
@@ -47,10 +60,13 @@ public static class SubmissionReportBuilder
     public static string Build(AutoSubmitReportData data)
     {
         var sb = new StringBuilder();
-        var day = data.ReportDay.ToString("ddd dd MMM");
+        var day = data.Period.ToString();
         sb.Append(":stopwatch: *TimeLogger auto-submit — daily report for ")
           .Append(day)
           .AppendLine("*");
+
+        if (!data.Period.IsSingleDay)
+            sb.AppendLine("_Catching up: covers every day since the last digest went out._");
 
         var stepFailures = data.StepFailures ?? [];
         AppendStepFailures(sb, stepFailures);
