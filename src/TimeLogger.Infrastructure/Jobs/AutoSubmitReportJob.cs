@@ -11,17 +11,21 @@ namespace TimeLogger.Infrastructure.Jobs;
 /// <summary>
 /// Hangfire recurring job (production only, AutoSubmit:Enabled) — runs the whole chain on
 /// every scheduled slot: pull worklogs from the source, apply mapping rules, submit all
-/// non-problematic mapped entries to Timelog, then post a run report to Slack. Owning the
+/// non-problematic mapped entries to Timelog, then tell Slack what it needs to know. Owning the
 /// pull is the point: on a daily-only import, the 13:00 and 17:00 runs submitted whatever
 /// the 06:00 pull happened to catch and silently ignored everything logged since.
 ///
 /// The three steps are independent enough to be worth attempting individually — a Tempo
 /// outage should not stop entries mapped on an earlier run from reaching Timelog — so each
-/// one is guarded separately, every failure is named in the Slack report, and the run is
-/// still recorded as failed so the dashboard and the failure notifier both see it.
+/// one is guarded separately, every failure is named in Slack, and the run is still
+/// recorded as failed so the dashboard and the failure notifier both see it.
+///
+/// Slack only hears from the job twice over: the morning run (<see cref="AutoSubmitOptions.DigestHour"/>)
+/// posts a digest of everything submitted the previous day, and any other run posts only
+/// when a step threw or a submission was rejected. Successful daytime runs stay quiet.
 ///
 /// Conflicting or unmapped entries are never auto-pushed; they are surfaced in the
-/// report's "needs attention" section instead.
+/// morning digest's "needs attention" section instead.
 /// </summary>
 public class AutoSubmitReportJob(
     AppDbContext db,
@@ -48,12 +52,6 @@ public class AutoSubmitReportJob(
 
         try
         {
-            var lastRunUtc = await db.JobExecutions
-                .Where(e => e.JobName == JobId)
-                .OrderByDescending(e => e.ExecutedAt)
-                .Select(e => (DateTimeOffset?)e.ExecutedAt)
-                .FirstOrDefaultAsync(cancellationToken);
-
             // 1. Pull — everything created or amended in the source since its last poll.
             var pull = await RunStepAsync(
                 PullStep, () => importService.ImportIncrementalAsync(cancellationToken), failures);
@@ -62,39 +60,21 @@ public class AutoSubmitReportJob(
             var mapped = await RunStepAsync(
                 MapStep, () => mappingService.ApplyAllPendingAsync(cancellationToken), failures);
 
-            // Counted after the pull so entries this run imported are "new since the last run".
-            var newEntriesSinceLastRun = await db.ImportedEntries
-                .CountAsync(e => e.ImportedAt > (lastRunUtc ?? DateTimeOffset.MinValue), cancellationToken);
-
             // 3. Submit — push the mapped, non-problematic entries to Timelog.
             await RunStepAsync(
                 SubmitStep, () => submissionService.SubmitAllPendingAsync(cancellationToken), failures);
 
-            var import = new ImportSummary(pull?.Imported ?? 0, pull?.Refreshed ?? 0, mapped);
-            var localNow = TimeZoneInfo.ConvertTime(runStartUtc, ResolveTimeZone());
-            var data = await CollectReportDataAsync(
-                runStartUtc, localNow, newEntriesSinceLastRun, import, failures, cancellationToken);
+            logger.LogInformation(
+                "AutoSubmitReportJob moved {Imported} new / {Refreshed} refreshed worklog(s), mapped {Mapped}",
+                pull?.Imported ?? 0, pull?.Refreshed ?? 0, mapped);
 
-            var anythingNew = newEntriesSinceLastRun > 0
-                || data.Submitted.Count > 0
-                || data.DuplicateCount > 0
-                || data.FailedCount > 0
-                || data.NewlyAmended.Count > 0;
+            var timeZone = ResolveTimeZone();
+            var localNow = TimeZoneInfo.ConvertTime(runStartUtc, timeZone);
 
-            if (ShouldSendReport(localNow, anythingNew, failures.Count > 0))
-            {
-                var sent = await slack.SendAsync(SubmissionReportBuilder.Build(data), cancellationToken);
-                logger.LogInformation("AutoSubmitReportJob report {Outcome}", sent ? "sent to Slack" : "NOT sent");
-
-                // Only stamp them once the report is genuinely out, so a failed webhook
-                // does not swallow the one mention each amendment gets.
-                if (sent && data.NewlyAmended.Count > 0)
-                    await MarkAmendmentsReportedAsync(data.NewlyAmended, cancellationToken);
-            }
+            if (IsDigestRun(localNow, options.Value.DigestHour))
+                await SendDailyDigestAsync(localNow, timeZone, failures, cancellationToken);
             else
-            {
-                logger.LogInformation("AutoSubmitReportJob: nothing new — report suppressed for this run");
-            }
+                await SendErrorAlertAsync(runStartUtc, localNow, failures, cancellationToken);
 
             if (failures.Count > 0)
             {
@@ -144,33 +124,101 @@ public class AutoSubmitReportJob(
     private static string DescribeFailures(IReadOnlyList<StepFailure> failures) =>
         string.Join(" | ", failures.Select(f => $"{f.Step}: {f.Error}"));
 
+    /// <summary>The first run of the day is the one that posts the daily digest.</summary>
+    public static bool IsDigestRun(DateTimeOffset localNow, int digestHour) => localNow.Hour == digestHour;
+
     /// <summary>
-    /// The 08:00 weekday run is an always-on heartbeat; every other run
-    /// (13:00, 17:00, weekends) only reports when something new happened —
-    /// or when a step failed, which is always worth saying out loud.
+    /// The weekday digest is an always-on heartbeat; on weekends it is only posted when
+    /// there is something in it — or when a step failed, which is always worth saying out loud.
     /// </summary>
-    public static bool ShouldSendReport(DateTimeOffset localNow, bool anythingNew, bool hasFailures = false)
+    public static bool ShouldSendDigest(DateTimeOffset localNow, bool anythingToReport, bool hasFailures = false)
     {
         if (hasFailures) return true;
         var isWeekday = localNow.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
-        return (isWeekday && localNow.Hour == 8) || anythingNew;
+        return isWeekday || anythingToReport;
     }
 
-    private async Task<AutoSubmitReportData> CollectReportDataAsync(
-        DateTimeOffset runStartUtc,
-        DateTimeOffset localRunTime,
-        int newEntriesSinceLastRun,
-        ImportSummary import,
+    /// <summary>
+    /// Morning run: report everything that reached Timelog during the previous local calendar
+    /// day. Each entry has one audit row whose <c>SubmittedAt</c> moves with every attempt, so a
+    /// day window never counts an entry twice and a re-sent digest (a Hangfire retry) simply
+    /// repeats itself.
+    /// </summary>
+    private async Task SendDailyDigestAsync(
+        DateTimeOffset localNow,
+        TimeZoneInfo timeZone,
         IReadOnlyList<StepFailure> stepFailures,
         CancellationToken ct)
     {
-        var runSubmissions = await db.SubmittedEntries
-            .Where(s => s.SubmittedAt >= runStartUtc)
+        var today = DateOnly.FromDateTime(localNow.DateTime);
+        var reportDay = today.AddDays(-1);
+        var dayStartUtc = LocalMidnightUtc(reportDay, timeZone);
+        var dayEndUtc = LocalMidnightUtc(today, timeZone);
+
+        var data = await CollectDigestDataAsync(localNow, reportDay, dayStartUtc, dayEndUtc, stepFailures, ct);
+
+        var anythingToReport = data.Submitted.Count > 0
+            || data.DuplicateCount > 0
+            || data.FailedCount > 0
+            || data.NewlyAmended.Count > 0;
+
+        if (!ShouldSendDigest(localNow, anythingToReport, stepFailures.Count > 0))
+        {
+            logger.LogInformation("AutoSubmitReportJob: quiet weekend day — digest suppressed");
+            return;
+        }
+
+        var sent = await slack.SendAsync(SubmissionReportBuilder.Build(data), ct);
+        logger.LogInformation("AutoSubmitReportJob digest {Outcome}", sent ? "sent to Slack" : "NOT sent");
+
+        // Only stamp them once the digest is genuinely out, so a failed webhook
+        // does not swallow the one mention each amendment gets.
+        if (sent && data.NewlyAmended.Count > 0)
+            await MarkAmendmentsReportedAsync(data.NewlyAmended, ct);
+    }
+
+    /// <summary>Daytime run: say nothing unless a step threw or Timelog rejected a submission.</summary>
+    private async Task SendErrorAlertAsync(
+        DateTimeOffset runStartUtc,
+        DateTimeOffset localNow,
+        IReadOnlyList<StepFailure> stepFailures,
+        CancellationToken ct)
+    {
+        var failedSubmissions = await db.SubmittedEntries
+            .Where(s => s.SubmittedAt >= runStartUtc && s.Status == SubmissionStatus.Failed)
+            .Select(s => s.ErrorMessage)
+            .ToListAsync(ct);
+
+        if (stepFailures.Count == 0 && failedSubmissions.Count == 0)
+        {
+            logger.LogInformation("AutoSubmitReportJob: no errors — nothing posted for this run");
+            return;
+        }
+
+        var text = SubmissionReportBuilder.BuildErrorAlert(
+            localNow, stepFailures, failedSubmissions.Count, failedSubmissions.FirstOrDefault());
+        var sent = await slack.SendAsync(text, ct);
+        logger.LogInformation("AutoSubmitReportJob error alert {Outcome}", sent ? "sent to Slack" : "NOT sent");
+    }
+
+    private async Task<AutoSubmitReportData> CollectDigestDataAsync(
+        DateTimeOffset localRunTime,
+        DateOnly reportDay,
+        DateTimeOffset dayStartUtc,
+        DateTimeOffset dayEndUtc,
+        IReadOnlyList<StepFailure> stepFailures,
+        CancellationToken ct)
+    {
+        // Failures run up to now rather than to midnight: this morning's own rejections are
+        // errors, and errors are never held back for tomorrow's digest.
+        var daySubmissions = await db.SubmittedEntries
+            .Where(s => s.SubmittedAt >= dayStartUtc
+                        && (s.SubmittedAt < dayEndUtc || s.Status == SubmissionStatus.Failed))
             .Include(s => s.ImportedEntry)
                 .ThenInclude(e => e.TimelogProject)
             .ToListAsync(ct);
 
-        var accountIds = runSubmissions
+        var accountIds = daySubmissions
             .Select(s => s.ImportedEntry.UserEmail)
             .Where(e => e != null)
             .Distinct()
@@ -184,7 +232,7 @@ public class AutoSubmitReportJob(
                                    m => (m.DisplayName ?? m.TimelogUserDisplayName)!, ct)
             : [];
 
-        var submitted = runSubmissions
+        var submitted = daySubmissions
             .Where(s => s.Status == SubmissionStatus.Success)
             .GroupBy(s => new
             {
@@ -200,8 +248,7 @@ public class AutoSubmitReportJob(
                 Math.Round(g.Sum(s => s.ImportedEntry.TimeSpentSeconds) / 3600.0, 2)))
             .ToList();
 
-        var failures = runSubmissions.Where(s => s.Status == SubmissionStatus.Failed).ToList();
-
+        var failures = daySubmissions.Where(s => s.Status == SubmissionStatus.Failed).ToList();
         // Amendments flagged by the Tempo pull that have not been announced yet.
         var amendedRows = await db.ImportedEntries
             .Where(e => e.AmendedAfterSubmissionAt != null && e.AmendmentReportedAt == null)
@@ -228,17 +275,16 @@ public class AutoSubmitReportJob(
 
         return new AutoSubmitReportData(
             LocalRunTime: localRunTime,
+            ReportDay: reportDay,
             Submitted: submitted,
-            DuplicateCount: runSubmissions.Count(s => s.Status == SubmissionStatus.Duplicate),
+            DuplicateCount: daySubmissions.Count(s => s.Status == SubmissionStatus.Duplicate),
             FailedCount: failures.Count,
             FirstError: failures.FirstOrDefault()?.ErrorMessage,
             ConflictCount: await db.ImportedEntries.CountAsync(e => e.Status == ImportStatus.Conflict, ct),
             PendingUnmappedCount: await db.ImportedEntries.CountAsync(e => e.Status == ImportStatus.Pending, ct),
             NeedsTaskCount: await db.ImportedEntries.CountAsync(
                 e => e.Status == ImportStatus.Mapped && e.TimelogTaskId == null, ct),
-            NewEntriesSinceLastRun: newEntriesSinceLastRun,
             NewlyAmended: newlyAmended,
-            Import: import,
             StepFailures: stepFailures);
     }
 
@@ -255,6 +301,12 @@ public class AutoSubmitReportJob(
 
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Marked {Count} amendment(s) as reported", rows.Count);
+    }
+
+    private static DateTimeOffset LocalMidnightUtc(DateOnly day, TimeZoneInfo timeZone)
+    {
+        var local = day.ToDateTime(TimeOnly.MinValue);
+        return new DateTimeOffset(local, timeZone.GetUtcOffset(local)).ToUniversalTime();
     }
 
     private TimeZoneInfo ResolveTimeZone()

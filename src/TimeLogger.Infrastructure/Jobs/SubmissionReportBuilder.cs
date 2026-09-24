@@ -2,7 +2,7 @@ using System.Text;
 
 namespace TimeLogger.Infrastructure.Jobs;
 
-/// <summary>Hours one employee had submitted into one Timelog project during a run.</summary>
+/// <summary>Hours one employee had submitted into one Timelog project on the report day.</summary>
 public record SubmittedGroup(string Employee, string Project, int EntryCount, double Hours);
 
 /// <summary>
@@ -23,12 +23,10 @@ public record AmendedAfterSubmission(
 /// </summary>
 public record StepFailure(string Step, string Error);
 
-/// <summary>What the pull and mapping steps moved before submission ran.</summary>
-public record ImportSummary(int Imported, int Refreshed, int Mapped);
-
-/// <summary>Everything the Slack report needs, collected after an auto-submit run.</summary>
+/// <summary>Everything the morning digest needs: what reached Timelog on <see cref="ReportDay"/>.</summary>
 public record AutoSubmitReportData(
     DateTimeOffset LocalRunTime,
+    DateOnly ReportDay,
     IReadOnlyList<SubmittedGroup> Submitted,
     int DuplicateCount,
     int FailedCount,
@@ -36,47 +34,38 @@ public record AutoSubmitReportData(
     int ConflictCount,
     int PendingUnmappedCount,
     int NeedsTaskCount,
-    int NewEntriesSinceLastRun,
     IReadOnlyList<AmendedAfterSubmission> NewlyAmended,
-    ImportSummary? Import = null,
     IReadOnlyList<StepFailure>? StepFailures = null);
 
-/// <summary>Renders the auto-submit run report as Slack mrkdwn.</summary>
+/// <summary>Renders the auto-submit Slack messages as mrkdwn.</summary>
 public static class SubmissionReportBuilder
 {
+    /// <summary>
+    /// The morning digest: everything submitted on the report day, plus whatever still
+    /// needs a human. The only message the job posts when nothing went wrong.
+    /// </summary>
     public static string Build(AutoSubmitReportData data)
     {
         var sb = new StringBuilder();
-        sb.Append(":stopwatch: *TimeLogger auto-submit — ")
-          .Append(data.LocalRunTime.ToString("ddd dd MMM, HH:mm"))
+        var day = data.ReportDay.ToString("ddd dd MMM");
+        sb.Append(":stopwatch: *TimeLogger auto-submit — daily report for ")
+          .Append(day)
           .AppendLine("*");
 
         var stepFailures = data.StepFailures ?? [];
-        if (stepFailures.Count > 0)
-        {
-            sb.AppendLine($":rotating_light: *{stepFailures.Count} step{Plural(stepFailures.Count)} failed — this run is incomplete:*");
-            foreach (var failure in stepFailures)
-                sb.AppendLine($"• {failure.Step}: {Truncate(failure.Error, 200)}");
-        }
-
-        if (data.Import is { } import && (import.Imported > 0 || import.Refreshed > 0 || import.Mapped > 0))
-        {
-            sb.AppendLine(
-                $"_Pulled {import.Imported} new and refreshed {import.Refreshed} worklog{Plural(import.Refreshed)} " +
-                $"from the source; mapped {import.Mapped}._");
-        }
+        AppendStepFailures(sb, stepFailures);
 
         if (data.Submitted.Count > 0)
         {
             var totalHours = data.Submitted.Sum(g => g.Hours);
             var totalEntries = data.Submitted.Sum(g => g.EntryCount);
-            sb.AppendLine($"*Submitted {FormatHours(totalHours)} across {totalEntries} entr{(totalEntries == 1 ? "y" : "ies")}:*");
+            sb.AppendLine($"*Submitted {FormatHours(totalHours)} across {totalEntries} entr{(totalEntries == 1 ? "y" : "ies")} on {day}:*");
             foreach (var g in data.Submitted.OrderBy(g => g.Employee).ThenBy(g => g.Project))
                 sb.AppendLine($"• {g.Employee} → {g.Project}: {FormatHours(g.Hours)} ({g.EntryCount})");
         }
         else
         {
-            sb.AppendLine("No entries were submitted this run.");
+            sb.AppendLine($"No entries were submitted on {day}.");
         }
 
         if (data.DuplicateCount > 0)
@@ -123,12 +112,47 @@ public static class SubmissionReportBuilder
             foreach (var line in attention)
                 sb.AppendLine($"• {line}");
         }
-        else if (data.Submitted.Count == 0 && data.DuplicateCount == 0 && stepFailures.Count == 0)
+        else if (stepFailures.Count == 0)
         {
             sb.AppendLine(":white_check_mark: All clear — nothing needs handling.");
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// What the daytime runs post instead of a report — only ever sent when a step threw
+    /// or a submission was rejected. Successful submissions wait for the morning digest.
+    /// </summary>
+    public static string BuildErrorAlert(
+        DateTimeOffset localRunTime,
+        IReadOnlyList<StepFailure> stepFailures,
+        int failedCount,
+        string? firstError)
+    {
+        var sb = new StringBuilder();
+        sb.Append(":rotating_light: *TimeLogger auto-submit — errors in the ")
+          .Append(localRunTime.ToString("HH:mm"))
+          .Append(" run, ")
+          .Append(localRunTime.ToString("ddd dd MMM"))
+          .AppendLine("*");
+
+        AppendStepFailures(sb, stepFailures);
+
+        if (failedCount > 0)
+            sb.AppendLine($"• :x: {failedCount} failed submission{Plural(failedCount)}" +
+                          (firstError is null ? "" : $" — first error: {Truncate(firstError, 140)}"));
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendStepFailures(StringBuilder sb, IReadOnlyList<StepFailure> stepFailures)
+    {
+        if (stepFailures.Count == 0) return;
+
+        sb.AppendLine($":rotating_light: *{stepFailures.Count} step{Plural(stepFailures.Count)} failed — this run is incomplete:*");
+        foreach (var failure in stepFailures)
+            sb.AppendLine($"• {failure.Step}: {Truncate(failure.Error, 200)}");
     }
 
     /// <summary>Keeps a bad day from posting a wall of Slack text.</summary>

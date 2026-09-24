@@ -166,15 +166,24 @@ Daily jobs, configured via `Hangfire:DailyPullCron` (default `0 6 * * *`):
 
 Scheduled through the day, opt-in via `AutoSubmit:Enabled`, on `AutoSubmit:Cron`
 (default `0 8,13,17 * * *`):
-- **timelog-auto-submit** — runs the whole chain on each slot: **pull → map → submit**, then
-  posts the run report to Slack. It owns the pull deliberately; when the import ran only once a
+- **timelog-auto-submit** — runs the whole chain on each slot: **pull → map → submit**. It owns the pull deliberately; when the import ran only once a
   day, the 13:00 and 17:00 runs submitted whatever the 06:00 pull happened to catch and ignored
   everything logged since, so same-day worklogs waited until the next morning.
 
   The three steps are attempted independently — a Tempo outage does not stop entries mapped on
-  an earlier run from reaching Timelog. Every step that throws is named in the Slack report
-  (which is always sent when a step failed, even on an otherwise quiet run), recorded against
-  the job's health, and then rethrown so Hangfire retries the run.
+  an earlier run from reaching Timelog. Every step that throws is named in Slack, recorded
+  against the job's health, and then rethrown so Hangfire retries the run.
+
+  Slack messages go to `AutoSubmit:SlackWebhookUrl` (falling back to
+  `Notifications:SlackWebhookUrl`); the webhook decides the channel. The job posts:
+  - **a daily digest on the `AutoSubmit:DigestHour` run** (default `8`) — everything submitted
+    during the previous local calendar day per employee and project, duplicates, rejected
+    submissions, source amendments made after submission, and the standing conflict /
+    unmapped / missing-task counts. Always sent on weekdays; on weekends only when there is
+    something in it.
+  - **error alerts on every other run** — only when a step threw or Timelog rejected a
+    submission. Successful daytime runs post nothing; their submissions appear in the next
+    morning's digest.
 
 **timelog-submit** is not scheduled; it is enqueued on demand when submission is started from
 the UI. `Sync Now` on `/sources` enqueues **tempo-pull**, and `Import Range` imports a chosen

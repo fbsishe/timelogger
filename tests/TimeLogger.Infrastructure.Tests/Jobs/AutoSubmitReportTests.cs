@@ -20,6 +20,7 @@ public class SubmissionReportBuilderTests
         IReadOnlyList<AmendedAfterSubmission>? newlyAmended = null) =>
         new(
             LocalRunTime: new DateTimeOffset(2026, 7, 6, 8, 0, 0, TimeSpan.FromHours(3)),
+            ReportDay: new DateOnly(2026, 7, 5),
             Submitted: submitted ?? [],
             DuplicateCount: duplicates,
             FailedCount: failed,
@@ -27,7 +28,6 @@ public class SubmissionReportBuilderTests
             ConflictCount: conflicts,
             PendingUnmappedCount: pending,
             NeedsTaskCount: needsTask,
-            NewEntriesSinceLastRun: 0,
             NewlyAmended: newlyAmended ?? []);
 
     [Fact]
@@ -86,7 +86,8 @@ public class SubmissionReportBuilderTests
             new SubmittedGroup("Bob", "Beta Project", 2, 3.5),
         ]));
 
-        Assert.Contains("Submitted 9.5h across 5 entries", report);
+        Assert.Contains("daily report for Sun 05 Jul", report);
+        Assert.Contains("Submitted 9.5h across 5 entries on Sun 05 Jul", report);
         Assert.Contains("Jane Doe → Alpha Project: 6h (3)", report);
         Assert.Contains("Bob → Beta Project: 3.5h (2)", report);
     }
@@ -111,7 +112,7 @@ public class SubmissionReportBuilderTests
     {
         var report = SubmissionReportBuilder.Build(MakeData());
 
-        Assert.Contains("No entries were submitted this run", report);
+        Assert.Contains("No entries were submitted on Sun 05 Jul", report);
         Assert.Contains("All clear", report);
     }
 
@@ -129,10 +130,25 @@ public class SubmissionReportBuilderTests
     }
 
     [Fact]
-    public void Build_OmitsTheImportLineWhenNothingMoved()
+    public void Build_AllClear_WhenSubmissionsWentThroughAndNothingIsOutstanding()
     {
-        var report = SubmissionReportBuilder.Build(MakeData() with { Import = new ImportSummary(0, 0, 0) });
-        Assert.DoesNotContain("Pulled", report);
+        var report = SubmissionReportBuilder.Build(MakeData(submitted: [new SubmittedGroup("Bob", "Beta", 1, 2.0)]));
+        Assert.Contains("All clear", report);
+    }
+
+    [Fact]
+    public void BuildErrorAlert_NamesFailedStepsAndRejectedSubmissions()
+    {
+        var alert = SubmissionReportBuilder.BuildErrorAlert(
+            new DateTimeOffset(2026, 7, 6, 13, 0, 0, TimeSpan.FromHours(3)),
+            [new StepFailure("Pull from Tempo", "HttpRequestException: 503")],
+            failedCount: 2,
+            firstError: "400: task closed");
+
+        Assert.Contains("errors in the 13:00 run, Mon 06 Jul", alert);
+        Assert.Contains("Pull from Tempo: HttpRequestException: 503", alert);
+        Assert.Contains("2 failed submissions — first error: 400: task closed", alert);
+        Assert.DoesNotContain("Submitted", alert);
     }
 
     [Fact]
@@ -144,7 +160,7 @@ public class SubmissionReportBuilderTests
     }
 }
 
-public class AutoSubmitShouldSendTests
+public class AutoSubmitScheduleTests
 {
     private static DateTimeOffset At(DayOfWeek day, int hour)
     {
@@ -154,24 +170,30 @@ public class AutoSubmitShouldSendTests
     }
 
     [Fact]
-    public void Weekday8am_AlwaysSends() =>
-        Assert.True(AutoSubmitReportJob.ShouldSendReport(At(DayOfWeek.Monday, 8), anythingNew: false));
+    public void MorningRun_IsTheDigestRun() =>
+        Assert.True(AutoSubmitReportJob.IsDigestRun(At(DayOfWeek.Monday, 8), digestHour: 8));
+
+    [Theory]
+    [InlineData(13)]
+    [InlineData(17)]
+    public void DaytimeRuns_AreNotDigestRuns(int hour) =>
+        Assert.False(AutoSubmitReportJob.IsDigestRun(At(DayOfWeek.Monday, hour), digestHour: 8));
 
     [Fact]
-    public void Weekday1pm_WithoutNews_Suppressed() =>
-        Assert.False(AutoSubmitReportJob.ShouldSendReport(At(DayOfWeek.Wednesday, 13), anythingNew: false));
+    public void WeekdayDigest_AlwaysSends() =>
+        Assert.True(AutoSubmitReportJob.ShouldSendDigest(At(DayOfWeek.Monday, 8), anythingToReport: false));
 
     [Fact]
-    public void Weekday5pm_WithNews_Sends() =>
-        Assert.True(AutoSubmitReportJob.ShouldSendReport(At(DayOfWeek.Friday, 17), anythingNew: true));
+    public void WeekendDigest_WithoutNews_Suppressed() =>
+        Assert.False(AutoSubmitReportJob.ShouldSendDigest(At(DayOfWeek.Saturday, 8), anythingToReport: false));
 
     [Fact]
-    public void Weekend8am_WithoutNews_Suppressed() =>
-        Assert.False(AutoSubmitReportJob.ShouldSendReport(At(DayOfWeek.Saturday, 8), anythingNew: false));
+    public void WeekendDigest_WithNews_Sends() =>
+        Assert.True(AutoSubmitReportJob.ShouldSendDigest(At(DayOfWeek.Sunday, 8), anythingToReport: true));
 
     [Fact]
-    public void Weekend8am_WithNews_Sends() =>
-        Assert.True(AutoSubmitReportJob.ShouldSendReport(At(DayOfWeek.Sunday, 8), anythingNew: true));
+    public void WeekendDigest_WithFailedStep_Sends() =>
+        Assert.True(AutoSubmitReportJob.ShouldSendDigest(At(DayOfWeek.Sunday, 8), anythingToReport: false, hasFailures: true));
 }
 
 public class AutoSubmitReportJobTests : IDisposable
@@ -194,11 +216,21 @@ public class AutoSubmitReportJobTests : IDisposable
             .ReturnsAsync(new TempoImportResult(0, 0, 0));
     }
 
-    private AutoSubmitReportJob CreateSut() =>
+    /// <summary>
+    /// The tests run at an arbitrary wall-clock hour, so the digest hour is pinned to the
+    /// current UTC hour (morning run) or the one after it (daytime run).
+    /// </summary>
+    private AutoSubmitReportJob CreateSut(bool digestRun = false) =>
         new(_db, _importerMock.Object, _mapperMock.Object, _submitterMock.Object,
             _jobHealthMock.Object, _slackMock.Object,
-            Options.Create(new AutoSubmitOptions { TimeZone = "UTC" }),
+            Options.Create(new AutoSubmitOptions
+            {
+                TimeZone = "UTC",
+                DigestHour = digestRun ? DateTimeOffset.UtcNow.Hour : (DateTimeOffset.UtcNow.Hour + 1) % 24,
+            }),
             NullLogger<AutoSubmitReportJob>.Instance);
+
+    private static DateTimeOffset StartOfTodayUtc() => new(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero);
 
     private async Task SeedEntryAsync(ImportStatus status, DateTimeOffset importedAt)
     {
@@ -219,6 +251,22 @@ public class AutoSubmitReportJobTests : IDisposable
             TimeSpentSeconds = 3600,
             Status = status,
             ImportedAt = importedAt,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task SeedSubmissionAsync(
+        SubmissionStatus status, DateTimeOffset submittedAt, int seconds = 3600, string? error = null)
+    {
+        await SeedEntryAsync(ImportStatus.Submitted, importedAt: submittedAt.AddMinutes(-1));
+        var entry = await _db.ImportedEntries.OrderByDescending(e => e.Id).FirstAsync();
+        entry.TimeSpentSeconds = seconds;
+        _db.SubmittedEntries.Add(new SubmittedEntry
+        {
+            ImportedEntryId = entry.Id,
+            Status = status,
+            SubmittedAt = submittedAt,
+            ErrorMessage = error,
         });
         await _db.SaveChangesAsync();
     }
@@ -257,7 +305,7 @@ public class AutoSubmitReportJobTests : IDisposable
     {
         var entry = await SeedAmendedEntryAsync();
 
-        await CreateSut().ExecuteAsync();
+        await CreateSut(digestRun: true).ExecuteAsync();
 
         _slackMock.Verify(s => s.SendAsync(
             It.Is<string>(t => t.Contains("amended in the source")
@@ -272,15 +320,8 @@ public class AutoSubmitReportJobTests : IDisposable
     public async Task Execute_AlreadyReportedAmendment_IsNotMentionedAgain()
     {
         await SeedAmendedEntryAsync(reportedAt: DateTimeOffset.UtcNow.AddHours(-2));
-        _db.JobExecutions.Add(new JobExecution
-        {
-            JobName = AutoSubmitReportJob.JobId,
-            ExecutedAt = DateTimeOffset.UtcNow.AddHours(-1),
-            Succeeded = true,
-        });
-        await _db.SaveChangesAsync();
 
-        await CreateSut().ExecuteAsync();
+        await CreateSut(digestRun: true).ExecuteAsync();
 
         _slackMock.Verify(s => s.SendAsync(
             It.Is<string>(t => t.Contains("amended in the source")),
@@ -294,7 +335,7 @@ public class AutoSubmitReportJobTests : IDisposable
         _slackMock.Setup(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        await CreateSut().ExecuteAsync();
+        await CreateSut(digestRun: true).ExecuteAsync();
 
         var reloaded = await _db.ImportedEntries.SingleAsync(e => e.Id == entry.Id);
         Assert.Null(reloaded.AmendmentReportedAt);   // gets another chance next run
@@ -312,45 +353,78 @@ public class AutoSubmitReportJobTests : IDisposable
     }
 
     [Fact]
-    public async Task Execute_NewEntriesSinceLastRun_SendsReport()
+    public async Task Execute_UnreportedAmendment_DaytimeRun_WaitsForTheDigest()
     {
-        // A previous run happened an hour ago; a new entry arrived after it
-        _db.JobExecutions.Add(new JobExecution
-        {
-            JobName = AutoSubmitReportJob.JobId,
-            ExecutedAt = DateTimeOffset.UtcNow.AddHours(-1),
-            Succeeded = true,
-        });
-        await _db.SaveChangesAsync();
-        await SeedEntryAsync(ImportStatus.Pending, importedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        var entry = await SeedAmendedEntryAsync();
 
         await CreateSut().ExecuteAsync();
 
-        _slackMock.Verify(s => s.SendAsync(It.Is<string>(t => t.Contains("unmapped")), It.IsAny<CancellationToken>()), Times.Once);
+        _slackMock.Verify(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        var reloaded = await _db.ImportedEntries.SingleAsync(e => e.Id == entry.Id);
+        Assert.Null(reloaded.AmendmentReportedAt);
     }
 
     [Fact]
-    public async Task Execute_NothingNew_OffPeakRun_SuppressesReport()
+    public async Task Execute_DaytimeRun_WithoutErrors_PostsNothing()
     {
-        // Entry imported BEFORE the previous run — nothing new since
-        await SeedEntryAsync(ImportStatus.Conflict, importedAt: DateTimeOffset.UtcNow.AddHours(-3));
-        _db.JobExecutions.Add(new JobExecution
-        {
-            JobName = AutoSubmitReportJob.JobId,
-            ExecutedAt = DateTimeOffset.UtcNow.AddHours(-1),
-            Succeeded = true,
-        });
-        await _db.SaveChangesAsync();
+        // Plenty happened — new entries, a successful submission, outstanding conflicts —
+        // but none of it is an error, so it waits for the morning digest.
+        await SeedEntryAsync(ImportStatus.Conflict, importedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        await SeedEntryAsync(ImportStatus.Pending, importedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        await SeedSubmissionAsync(SubmissionStatus.Success, submittedAt: DateTimeOffset.UtcNow.AddSeconds(1));
 
         await CreateSut().ExecuteAsync();
 
-        // This test runs at an arbitrary wall-clock hour; the suppression branch
-        // is only guaranteed outside the 8:00 UTC weekday heartbeat window.
-        var nowUtc = DateTimeOffset.UtcNow;
-        var isHeartbeatWindow = nowUtc.Hour == 8
-            && nowUtc.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
-        if (!isHeartbeatWindow)
-            _slackMock.Verify(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _slackMock.Verify(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _jobHealthMock.Verify(h => h.RecordSuccessAsync(AutoSubmitReportJob.JobId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_DaytimeRun_RejectedSubmission_PostsErrorAlert()
+    {
+        _submitterMock.Setup(s => s.SubmitAllPendingAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => SeedSubmissionAsync(
+                SubmissionStatus.Failed, DateTimeOffset.UtcNow, error: "400: task closed"));
+
+        await CreateSut().ExecuteAsync();
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("errors in the")
+                               && t.Contains("1 failed submission — first error: 400: task closed")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_DigestRun_ReportsYesterdaysSubmissionsOnly()
+    {
+        var yesterdayNoon = StartOfTodayUtc().AddHours(-12);
+        await SeedSubmissionAsync(SubmissionStatus.Success, yesterdayNoon, seconds: 3 * 3600);
+        await SeedSubmissionAsync(SubmissionStatus.Success, yesterdayNoon.AddHours(-1), seconds: 3600);
+        await SeedSubmissionAsync(SubmissionStatus.Success, StartOfTodayUtc().AddHours(-36));   // the day before
+        await SeedSubmissionAsync(SubmissionStatus.Success, DateTimeOffset.UtcNow.AddSeconds(1));   // this run
+
+        await CreateSut(digestRun: true).ExecuteAsync();
+
+        var yesterday = DateOnly.FromDateTime(yesterdayNoon.UtcDateTime).ToString("ddd dd MMM");
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains($"daily report for {yesterday}")
+                               && t.Contains($"Submitted 4h across 2 entries on {yesterday}")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_DigestRun_IncludesThisMorningsRejectedSubmissions()
+    {
+        await SeedSubmissionAsync(SubmissionStatus.Success, StartOfTodayUtc().AddHours(-12));
+        _submitterMock.Setup(s => s.SubmitAllPendingAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => SeedSubmissionAsync(
+                SubmissionStatus.Failed, DateTimeOffset.UtcNow, error: "400: task closed"));
+
+        await CreateSut(digestRun: true).ExecuteAsync();
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("daily report for") && t.Contains("1 failed submission")),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -407,23 +481,16 @@ public class AutoSubmitReportJobTests : IDisposable
     }
 
     [Fact]
-    public async Task Execute_StepFailure_SendsReportEvenWhenNothingIsNew()
+    public async Task Execute_StepFailure_DaytimeRun_PostsErrorAlert()
     {
-        // Off-peak run with nothing new — the report would normally be suppressed.
-        _db.JobExecutions.Add(new JobExecution
-        {
-            JobName = AutoSubmitReportJob.JobId,
-            ExecutedAt = DateTimeOffset.UtcNow.AddHours(-1),
-            Succeeded = true,
-        });
-        await _db.SaveChangesAsync();
         _mapperMock.Setup(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("rule engine broke"));
 
         await Assert.ThrowsAsync<AutoSubmitStepFailedException>(() => CreateSut().ExecuteAsync());
 
         _slackMock.Verify(s => s.SendAsync(
-            It.Is<string>(t => t.Contains("Apply mapping rules") && t.Contains("rule engine broke")),
+            It.Is<string>(t => t.Contains("errors in the")
+                               && t.Contains("Apply mapping rules") && t.Contains("rule engine broke")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -449,18 +516,15 @@ public class AutoSubmitReportJobTests : IDisposable
     }
 
     [Fact]
-    public async Task Execute_ReportsWhatThePullAndMappingMoved()
+    public async Task Execute_StepFailure_DigestRun_LeadsTheDigestWithIt()
     {
         _importerMock.Setup(i => i.ImportIncrementalAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TempoImportResult(4, 2, 0));
-        _mapperMock.Setup(m => m.ApplyAllPendingAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(3);
-        await SeedEntryAsync(ImportStatus.Pending, importedAt: DateTimeOffset.UtcNow);
+            .ThrowsAsync(new HttpRequestException("tempo down"));
 
-        await CreateSut().ExecuteAsync();
+        await Assert.ThrowsAsync<AutoSubmitStepFailedException>(() => CreateSut(digestRun: true).ExecuteAsync());
 
         _slackMock.Verify(s => s.SendAsync(
-            It.Is<string>(t => t.Contains("Pulled 4 new and refreshed 2 worklogs from the source; mapped 3")),
+            It.Is<string>(t => t.Contains("daily report for") && t.Contains("1 step failed") && t.Contains("tempo down")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
