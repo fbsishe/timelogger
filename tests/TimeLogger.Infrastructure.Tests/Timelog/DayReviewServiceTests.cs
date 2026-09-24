@@ -131,15 +131,15 @@ public class DayReviewServiceTests : IDisposable
 
     private static TimeTrackingItemDto Registration(
         int taskId, double hours, int userId = 8, int regId = 1000, int? approvalStatus = 7) => new()
-    {
-        TimeRegistrationId = regId,
-        TaskId = taskId,
-        TaskName = "Dev Task",
-        UserId = userId,
-        Hours = hours,
-        Comment = "Work",
-        ApprovalStatus = approvalStatus,
-    };
+        {
+            TimeRegistrationId = regId,
+            TaskId = taskId,
+            TaskName = "Dev Task",
+            UserId = userId,
+            Hours = hours,
+            Comment = "Work",
+            ApprovalStatus = approvalStatus,
+        };
 
     [Fact]
     public async Task NoEmployeeMapping_ReturnsWarningAndSkipsTimelog()

@@ -154,7 +154,7 @@ public class DayReviewService(
 
             var state = (ours.Count, regs.Count) switch
             {
-                (> 0, 0) => DayGroupState.MissingInTimelog,
+                ( > 0, 0) => DayGroupState.MissingInTimelog,
                 (0, > 0) => DayGroupState.OnlyInTimelog,
                 _ => Math.Abs(ourHours - timelogHours) < 0.01 ? DayGroupState.Match : DayGroupState.Different,
             };

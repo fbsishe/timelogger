@@ -310,10 +310,10 @@ public class TimelogSubmissionService(
         var ourHours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2);
         var targetHours = resolution switch
         {
-            ConflictResolution.UseOurs       => ourHours,
+            ConflictResolution.UseOurs => ourHours,
             ConflictResolution.AddToExisting => Math.Round(ourHours + (entry.ConflictHoursInTimelog ?? 0), 2),
-            ConflictResolution.SetCustom     => Math.Round(customHours ?? ourHours, 2),
-            _                                => ourHours,
+            ConflictResolution.SetCustom => Math.Round(customHours ?? ourHours, 2),
+            _ => ourHours,
         };
 
         var comment = entry.Description;

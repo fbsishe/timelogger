@@ -209,11 +209,11 @@ public class SubmissionService(
         {
             switch (await submitter.SubmitAsync(entry, ct))
             {
-                case SubmitOutcome.Succeeded:  succeeded++;  break;
-                case SubmitOutcome.Failed:     failed++;     break;
-                case SubmitOutcome.Skipped:    skipped++;    break;
-                case SubmitOutcome.Duplicate:  duplicates++; break;
-                case SubmitOutcome.Conflict:   conflicts++;  break;
+                case SubmitOutcome.Succeeded: succeeded++; break;
+                case SubmitOutcome.Failed: failed++; break;
+                case SubmitOutcome.Skipped: skipped++; break;
+                case SubmitOutcome.Duplicate: duplicates++; break;
+                case SubmitOutcome.Conflict: conflicts++; break;
             }
         }
 
