@@ -17,6 +17,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppUserProject> AppUserProjects => Set<AppUserProject>();
     public DbSet<JobExecution> JobExecutions => Set<JobExecution>();
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
+    public DbSet<DigestReport> DigestReports => Set<DigestReport>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

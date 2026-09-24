@@ -20,7 +20,7 @@ public class SubmissionReportBuilderTests
         IReadOnlyList<AmendedAfterSubmission>? newlyAmended = null) =>
         new(
             LocalRunTime: new DateTimeOffset(2026, 7, 6, 8, 0, 0, TimeSpan.FromHours(3)),
-            ReportDay: new DateOnly(2026, 7, 5),
+            Period: new DigestPeriod(new DateOnly(2026, 7, 5), new DateOnly(2026, 7, 5)),
             Submitted: submitted ?? [],
             DuplicateCount: duplicates,
             FailedCount: failed,
@@ -137,6 +137,23 @@ public class SubmissionReportBuilderTests
     }
 
     [Fact]
+    public void Build_CatchUpDigest_NamesTheWholePeriod()
+    {
+        var report = SubmissionReportBuilder.Build(MakeData(submitted: [new SubmittedGroup("Bob", "Beta", 1, 2.0)]) with
+        {
+            Period = new DigestPeriod(new DateOnly(2026, 7, 3), new DateOnly(2026, 7, 5)),
+        });
+
+        Assert.Contains("daily report for Fri 03 Jul – Sun 05 Jul", report);
+        Assert.Contains("Catching up", report);
+        Assert.Contains("Submitted 2h across 1 entry on Fri 03 Jul – Sun 05 Jul", report);
+    }
+
+    [Fact]
+    public void Build_SingleDayDigest_HasNoCatchUpNote() =>
+        Assert.DoesNotContain("Catching up", SubmissionReportBuilder.Build(MakeData()));
+
+    [Fact]
     public void BuildErrorAlert_NamesFailedStepsAndRejectedSubmissions()
     {
         var alert = SubmissionReportBuilder.BuildErrorAlert(
@@ -169,15 +186,49 @@ public class AutoSubmitScheduleTests
         return monday.AddDays(((int)day - (int)DayOfWeek.Monday + 7) % 7);
     }
 
+    private static readonly DateOnly Sunday = new(2026, 7, 5);
+
     [Fact]
-    public void MorningRun_IsTheDigestRun() =>
-        Assert.True(AutoSubmitReportJob.IsDigestRun(At(DayOfWeek.Monday, 8), digestHour: 8));
+    public void MorningRun_OwesYesterdaysDigest() =>
+        Assert.Equal(
+            new DigestPeriod(Sunday, Sunday),
+            AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, 8), digestHour: 8, lastDigestDay: Sunday.AddDays(-1)));
+
+    [Fact]
+    public void RunBeforeTheDigestHour_OwesNothing() =>
+        Assert.Null(AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, 7), digestHour: 8, lastDigestDay: null));
 
     [Theory]
     [InlineData(13)]
     [InlineData(17)]
-    public void DaytimeRuns_AreNotDigestRuns(int hour) =>
-        Assert.False(AutoSubmitReportJob.IsDigestRun(At(DayOfWeek.Monday, hour), digestHour: 8));
+    public void DaytimeRuns_AfterThisMorningsDigest_OweNothing(int hour) =>
+        Assert.Null(AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, hour), digestHour: 8, lastDigestDay: Sunday));
+
+    [Theory]
+    [InlineData(13)]
+    [InlineData(17)]
+    public void DaytimeRuns_WhenTheMorningRunWasMissed_CatchUp(int hour) =>
+        Assert.Equal(
+            new DigestPeriod(Sunday, Sunday),
+            AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, hour), digestHour: 8, lastDigestDay: Sunday.AddDays(-1)));
+
+    [Fact]
+    public void FirstEverRun_CoversYesterdayOnly() =>
+        Assert.Equal(
+            new DigestPeriod(Sunday, Sunday),
+            AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, 8), digestHour: 8, lastDigestDay: null));
+
+    [Fact]
+    public void MissedDays_AreCoveredFromTheDayAfterTheLastDigest() =>
+        Assert.Equal(
+            new DigestPeriod(Sunday.AddDays(-2), Sunday),
+            AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, 8), digestHour: 8, lastDigestDay: Sunday.AddDays(-3)));
+
+    [Fact]
+    public void LongOutage_CatchUpIsCappedToAWeek() =>
+        Assert.Equal(
+            new DigestPeriod(Sunday.AddDays(1 - AutoSubmitReportJob.MaxCatchUpDays), Sunday),
+            AutoSubmitReportJob.DigestPeriodDue(At(DayOfWeek.Monday, 8), digestHour: 8, lastDigestDay: Sunday.AddDays(-30)));
 
     [Fact]
     public void WeekdayDigest_AlwaysSends() =>
@@ -217,20 +268,27 @@ public class AutoSubmitReportJobTests : IDisposable
     }
 
     /// <summary>
-    /// The tests run at an arbitrary wall-clock hour, so the digest hour is pinned to the
-    /// current UTC hour (morning run) or the one after it (daytime run).
+    /// The tests run at an arbitrary wall-clock hour, so the digest is due from midnight and
+    /// a daytime run is modelled the way it happens in production: this morning's digest has
+    /// already gone out.
     /// </summary>
-    private AutoSubmitReportJob CreateSut(bool digestRun = false) =>
-        new(_db, _importerMock.Object, _mapperMock.Object, _submitterMock.Object,
+    private AutoSubmitReportJob CreateSut(bool digestRun = false)
+    {
+        if (!digestRun && !_db.DigestReports.Any())
+        {
+            _db.DigestReports.Add(new DigestReport { FromDay = Yesterday(), ToDay = Yesterday(), Posted = true });
+            _db.SaveChanges();
+        }
+
+        return new(_db, _importerMock.Object, _mapperMock.Object, _submitterMock.Object,
             _jobHealthMock.Object, _slackMock.Object,
-            Options.Create(new AutoSubmitOptions
-            {
-                TimeZone = "UTC",
-                DigestHour = digestRun ? DateTimeOffset.UtcNow.Hour : (DateTimeOffset.UtcNow.Hour + 1) % 24,
-            }),
+            Options.Create(new AutoSubmitOptions { TimeZone = "UTC", DigestHour = 0 }),
             NullLogger<AutoSubmitReportJob>.Instance);
+    }
 
     private static DateTimeOffset StartOfTodayUtc() => new(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero);
+
+    private static DateOnly Yesterday() => DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime).AddDays(-1);
 
     private async Task SeedEntryAsync(ImportStatus status, DateTimeOffset importedAt)
     {
@@ -425,6 +483,65 @@ public class AutoSubmitReportJobTests : IDisposable
         _slackMock.Verify(s => s.SendAsync(
             It.Is<string>(t => t.Contains("daily report for") && t.Contains("1 failed submission")),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_DigestSent_IsRecorded_SoALaterRunTheSameDayStaysQuiet()
+    {
+        await SeedSubmissionAsync(SubmissionStatus.Success, StartOfTodayUtc().AddHours(-12));
+
+        await CreateSut(digestRun: true).ExecuteAsync();
+        await CreateSut(digestRun: true).ExecuteAsync();   // e.g. the 13:00 run
+
+        _slackMock.Verify(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        var digest = await _db.DigestReports.SingleAsync();
+        Assert.Equal(new DigestPeriod(Yesterday(), Yesterday()), new DigestPeriod(digest.FromDay, digest.ToDay));
+        Assert.True(digest.Posted);
+    }
+
+    [Fact]
+    public async Task Execute_DigestWebhookFails_RecordsNothing_AndTheNextRunRetries()
+    {
+        await SeedSubmissionAsync(SubmissionStatus.Success, StartOfTodayUtc().AddHours(-12));
+        _slackMock.SetupSequence(s => s.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false)
+            .ReturnsAsync(true);
+
+        await CreateSut(digestRun: true).ExecuteAsync();
+        Assert.False(await _db.DigestReports.AnyAsync());
+
+        await CreateSut(digestRun: true).ExecuteAsync();
+
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains("daily report for")), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        Assert.Equal(1, await _db.DigestReports.CountAsync());
+    }
+
+    [Fact]
+    public async Task Execute_MissedDigests_AreCaughtUpInOneReport()
+    {
+        // The last digest covered three days ago; the two mornings since were missed.
+        var today = StartOfTodayUtc();
+        _db.DigestReports.Add(new DigestReport
+        {
+            FromDay = Yesterday().AddDays(-2),
+            ToDay = Yesterday().AddDays(-2),
+            Posted = true,
+        });
+        await _db.SaveChangesAsync();
+        await SeedSubmissionAsync(SubmissionStatus.Success, today.AddHours(-60));   // already reported
+        await SeedSubmissionAsync(SubmissionStatus.Success, today.AddHours(-36));
+        await SeedSubmissionAsync(SubmissionStatus.Success, today.AddHours(-12));
+
+        await CreateSut(digestRun: true).ExecuteAsync();
+
+        var period = new DigestPeriod(Yesterday().AddDays(-1), Yesterday());
+        _slackMock.Verify(s => s.SendAsync(
+            It.Is<string>(t => t.Contains($"daily report for {period}")
+                               && t.Contains("Catching up")
+                               && t.Contains($"Submitted 2h across 2 entries on {period}")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(Yesterday(), await _db.DigestReports.MaxAsync(d => d.ToDay));
     }
 
     [Fact]
