@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TimeLogger.Application.Interfaces;
+using TimeLogger.Application.Services;
 using TimeLogger.Domain;
 using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure.Persistence;
@@ -15,6 +16,7 @@ public class TimelogSubmissionService(
     ITimelogReportingClient reportingClient,
     AppDbContext db,
     IOptions<TimelogOptions> options,
+    IAuditLogService auditLog,
     ILogger<TimelogSubmissionService> logger) : ITimelogSubmissionService
 {
     public async Task<SubmitOutcome> SubmitAsync(ImportedEntry entry, CancellationToken cancellationToken = default)
@@ -294,6 +296,9 @@ public class TimelogSubmissionService(
             return SubmitOutcome.Skipped;
         }
 
+        if (resolution == ConflictResolution.KeepExisting)
+            return await KeepExistingRegistration(entry, cancellationToken);
+
         var task = entry.TimelogTaskId.HasValue
             ? await db.TimelogTasks.FindAsync([entry.TimelogTaskId.Value], cancellationToken)
             : null;
@@ -511,10 +516,39 @@ public class TimelogSubmissionService(
         return await MarkConflictResolved(entry, registrationGuid.ToString(), cancellationToken);
     }
 
+    /// <summary>
+    /// Accepts the registration already in Timelog without touching it (e.g. the period is
+    /// closed and was corrected by hand). The entry becomes Submitted so re-imports treat it as
+    /// locked and it never re-enters the submission queue.
+    /// </summary>
+    private async Task<SubmitOutcome> KeepExistingRegistration(
+        ImportedEntry entry,
+        CancellationToken cancellationToken)
+    {
+        var ourHours = Math.Round(entry.TimeSpentSeconds / 3600.0, 2);
+        var timelogHours = entry.ConflictHoursInTimelog;
+        var registrationId = entry.ConflictTimelogRegistrationId!;
+
+        logger.LogInformation(
+            "Resolving conflict for entry {EntryId}: keeping Timelog registration {RegId} as-is ({TimelogHours}h, ours {OurHours}h)",
+            entry.Id, registrationId, timelogHours, ourHours);
+
+        var outcome = await MarkConflictResolved(entry, registrationId, cancellationToken, SubmissionStatus.KeptExisting);
+
+        await auditLog.LogAsync(
+            "Conflict", "KeptTimelog",
+            $"{entry.IssueKey ?? entry.ExternalId} · {entry.UserEmail} · {entry.WorkDate:yyyy-MM-dd}",
+            $"Kept Timelog registration {registrationId} at {timelogHours}h unchanged; ours was {ourHours}h",
+            cancellationToken);
+
+        return outcome;
+    }
+
     private async Task<SubmitOutcome> MarkConflictResolved(
         ImportedEntry entry,
         string externalId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SubmissionStatus status = SubmissionStatus.Success)
     {
         entry.Status = ImportStatus.Submitted;
         entry.ConflictHoursInTimelog = null;
@@ -529,14 +563,14 @@ public class TimelogSubmissionService(
             {
                 ImportedEntryId = entry.Id,
                 ExternalId = externalId,
-                Status = SubmissionStatus.Success,
+                Status = status,
                 SubmittedAt = DateTimeOffset.UtcNow,
                 AttemptCount = 1,
             });
         }
         else
         {
-            existingAudit.Status = SubmissionStatus.Success;
+            existingAudit.Status = status;
             existingAudit.SubmittedAt = DateTimeOffset.UtcNow;
             existingAudit.ExternalId = externalId;
             existingAudit.ErrorMessage = null;

@@ -193,6 +193,9 @@ else
                             <MudSelectItem T="ConflictResolution" Value="ConflictResolution.SetCustom">
                                 Set custom value
                             </MudSelectItem>
+                            <MudSelectItem T="ConflictResolution" Value="ConflictResolution.KeepExisting">
+                                Keep Timelog (@context.TimelogHours h) — no change
+                            </MudSelectItem>
                         </MudSelect>
                         @if (_conflictResolutions.GetValueOrDefault(context.Id, ConflictResolution.UseOurs) == ConflictResolution.SetCustom)
                         {
@@ -209,7 +212,8 @@ else
                     <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Warning"
                                Disabled="@_resolving"
                                OnClick="@(() => ResolveConflictAsync(context))">
-                        Resolve
+                        @(_conflictResolutions.GetValueOrDefault(context.Id, ConflictResolution.UseOurs) == ConflictResolution.KeepExisting
+                            ? "Accept" : "Resolve")
                     </MudButton>
                 </MudTd>
             </RowTemplate>
@@ -339,6 +343,7 @@ else
                     <MudChip T="SubmissionStatus" Value="SubmissionStatus.Duplicate"    Color="Color.Info"    Size="Size.Small">Duplicate</MudChip>
                     <MudChip T="SubmissionStatus" Value="SubmissionStatus.Failed"       Color="Color.Error"   Size="Size.Small">Failed</MudChip>
                     <MudChip T="SubmissionStatus" Value="SubmissionStatus.Acknowledged" Color="Color.Default" Size="Size.Small">Acknowledged</MudChip>
+                    <MudChip T="SubmissionStatus" Value="SubmissionStatus.KeptExisting" Color="Color.Secondary" Size="Size.Small">Kept Timelog</MudChip>
                 </MudChipSet>
                 @if (_historyStatusFilter.Any())
                 {
@@ -378,9 +383,10 @@ else
                              Color="@(context.Status switch {
                                  SubmissionStatus.Success   => Color.Success,
                                  SubmissionStatus.Duplicate => Color.Info,
+                                 SubmissionStatus.KeptExisting => Color.Secondary,
                                  _                          => Color.Error
                              })">
-                        @context.Status
+                        @(context.Status == SubmissionStatus.KeptExisting ? "Kept Timelog" : context.Status.ToString())
                     </MudChip>
                 </MudTd>
                 <MudTd>@context.AttemptCount</MudTd>
@@ -660,11 +666,23 @@ else
             return;
         }
 
+        if (resolution == ConflictResolution.KeepExisting)
+        {
+            var confirmed = await DialogService.ShowMessageBox(
+                "Keep Timelog as-is",
+                $"Timelog will not be modified — the registration stays at {item.TimelogHours} h " +
+                $"(ours is {item.OurHours} h) and the entry is marked as handled.",
+                yesText: "Accept", cancelText: "Cancel");
+            if (confirmed != true) return;
+        }
+
         _resolving = true;
         var outcome = await SubmissionService.ResolveConflictAsync(item.Id, resolution, customHours);
         _resolving = false;
 
-        if (outcome == SubmitOutcome.Succeeded)
+        if (outcome == SubmitOutcome.Succeeded && resolution == ConflictResolution.KeepExisting)
+            Snackbar.Add($"Kept Timelog as-is for {item.IssueKey ?? item.Description ?? "entry"}.", Severity.Success);
+        else if (outcome == SubmitOutcome.Succeeded)
             Snackbar.Add($"Conflict resolved for {item.IssueKey ?? item.Description ?? "entry"}.", Severity.Success);
         else
             Snackbar.Add("Resolution failed — check logs for details.", Severity.Error);

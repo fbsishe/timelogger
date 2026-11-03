@@ -21,7 +21,9 @@ public interface ITimelogSubmissionService
 
     /// <summary>
     /// Resolves a conflict on an entry that previously returned <see cref="SubmitOutcome.Conflict"/>.
-    /// Updates the existing Timelog registration according to the chosen resolution mode.
+    /// Updates the existing Timelog registration according to the chosen resolution mode, or —
+    /// for <see cref="ConflictResolution.KeepExisting"/> — leaves Timelog untouched and records
+    /// the conflict as accepted.
     /// </summary>
     Task<SubmitOutcome> ResolveConflictAsync(
         ImportedEntry entry,

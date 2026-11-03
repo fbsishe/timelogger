@@ -22,6 +22,7 @@ public class DayReviewService(
         var entries = await db.ImportedEntries
             .Where(e => e.UserEmail == accountId && e.WorkDate == date && e.Status != ImportStatus.Ignored)
             .Include(e => e.TimelogTask)
+            .Include(e => e.SubmittedEntry)
             .OrderBy(e => e.IssueKey)
             .ToListAsync(ct);
 
@@ -158,6 +159,11 @@ public class DayReviewService(
                 (0, > 0) => DayGroupState.OnlyInTimelog,
                 _ => Math.Abs(ourHours - timelogHours) < 0.01 ? DayGroupState.Match : DayGroupState.Different,
             };
+
+            // A difference someone explicitly chose to keep is no longer something to act on.
+            if (state == DayGroupState.Different
+                && ours.All(e => e.SubmittedEntry?.Status == SubmissionStatus.KeptExisting))
+                state = DayGroupState.Accepted;
 
             // Without a successful Timelog query, an empty Timelog side means "unknown", not "missing".
             if (!timelogQueried && state == DayGroupState.MissingInTimelog)

@@ -15,6 +15,11 @@ public enum DayGroupState
     OnlyInTimelog,
     /// <summary>Our entries are not mapped to a Timelog task, so they cannot be compared.</summary>
     Unmapped,
+    /// <summary>
+    /// Hours differ, but the difference was deliberately accepted ("keep Timelog as-is"),
+    /// e.g. because the period is closed and was corrected by hand.
+    /// </summary>
+    Accepted,
 }
 
 /// <summary>One ImportedEntry on the Timelogger side of the comparison.</summary>

@@ -192,6 +192,30 @@ public class DayReviewServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DifferingHours_KeptAsIs_IsAccepted()
+    {
+        var task = await SeedTaskAsync();
+        var entry = await SeedEntryAsync(task.Id, hours: 1.0);
+        _db.SubmittedEntries.Add(new SubmittedEntry
+        {
+            ImportedEntryId = entry.Id,
+            ExternalId = "4242",
+            Status = SubmissionStatus.KeptExisting,
+            SubmittedAt = DateTimeOffset.UtcNow,
+            AttemptCount = 1,
+        });
+        await _db.SaveChangesAsync();
+        await SeedMappingAsync();
+        SetupApiReturns(Registration(500, 0.5));
+
+        var result = await _sut.GetDayReviewAsync(AccountId, Date);
+
+        var group = Assert.Single(result.Groups);
+        Assert.Equal(DayGroupState.Accepted, group.State);
+        Assert.False(group.CanQuickResolve);
+    }
+
+    [Fact]
     public async Task DifferingHours_MultipleEntriesOnTask_IsNotQuickResolvable()
     {
         var task = await SeedTaskAsync();
