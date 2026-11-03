@@ -231,7 +231,7 @@ else
                 }
                 @if (_dayReview.TimelogQueried)
                 {
-                    @if (_dayReview.Groups.All(g => g.State == DayGroupState.Match))
+                    @if (_dayReview.Groups.All(g => g.State is DayGroupState.Match or DayGroupState.Accepted))
                     {
                         <MudChip T="string" Size="Size.Small" Color="Color.Success"
                                  Icon="@Icons.Material.Filled.CheckCircle">Everything matches</MudChip>
@@ -263,9 +263,9 @@ else
                             @GroupStateLabel(group.State)
                         </MudChip>
                         <MudSpacer />
-                        @if (group.State is DayGroupState.Different)
+                        @if (group.State is DayGroupState.Different or DayGroupState.Accepted)
                         {
-                            <MudText Typo="Typo.body2" Color="Color.Warning">
+                            <MudText Typo="Typo.body2" Color="@(group.State == DayGroupState.Accepted ? Color.Secondary : Color.Warning)">
                                 <b>@group.OurHours h</b> here vs <b>@group.TimelogHours h</b> in Timelog
                             </MudText>
                         }
@@ -375,6 +375,9 @@ else
                                 <MudSelectItem T="ConflictResolution" Value="ConflictResolution.SetCustom">
                                     Set custom value
                                 </MudSelectItem>
+                                <MudSelectItem T="ConflictResolution" Value="ConflictResolution.KeepExisting">
+                                    Keep Timelog (@group.TimelogHours h) — no change
+                                </MudSelectItem>
                             </MudSelect>
                             @if (_dayResolutions.GetValueOrDefault(entry.Id, ConflictResolution.UseOurs) == ConflictResolution.SetCustom)
                             {
@@ -384,12 +387,19 @@ else
                                                  Placeholder="Hours" HideSpinButtons="true"
                                                  Dense="true" Margin="Margin.Dense" Style="width:80px" />
                             }
+                            @{ var keepExisting = _dayResolutions.GetValueOrDefault(entry.Id, ConflictResolution.UseOurs) == ConflictResolution.KeepExisting; }
                             <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Warning"
-                                       Disabled="@(_dayReviewBusy || _dayReview.IsTimesheetClosed)"
+                                       Disabled="@(_dayReviewBusy || (_dayReview.IsTimesheetClosed && !keepExisting))"
                                        OnClick="@(() => ResolveDayDifferenceAsync(group))">
-                                Apply to Timelog
+                                @(keepExisting ? "Accept as-is" : "Apply to Timelog")
                             </MudButton>
-                            @if (_dayReview.IsTimesheetClosed)
+                            @if (keepExisting)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    Timelog is not modified — the difference is recorded as accepted.
+                                </MudText>
+                            }
+                            else if (_dayReview.IsTimesheetClosed)
                             {
                                 <MudText Typo="Typo.caption" Color="Color.Error">
                                     Timesheet is closed in Timelog — changes are rejected until it is reopened.
@@ -402,6 +412,12 @@ else
                                 </MudText>
                             }
                         </MudStack>
+                    }
+                    else if (group.State == DayGroupState.Accepted)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                            Difference accepted — Timelog was deliberately left as-is.
+                        </MudText>
                     }
                     else if (group.State == DayGroupState.Different)
                     {
@@ -660,7 +676,9 @@ else
             entry.Id, registration.RegistrationId, registration.Hours, resolution, customHours);
         _dayReviewBusy = false;
 
-        if (outcome == SubmitOutcome.Succeeded)
+        if (outcome == SubmitOutcome.Succeeded && resolution == ConflictResolution.KeepExisting)
+            Snackbar.Add($"Kept Timelog as-is for {group.TaskName}.", Severity.Success);
+        else if (outcome == SubmitOutcome.Succeeded)
             Snackbar.Add($"Timelog updated for {group.TaskName}.", Severity.Success);
         else
             Snackbar.Add("Update failed — the entry is now marked as a conflict; see the Submission page.", Severity.Error);
@@ -702,6 +720,7 @@ else
         DayGroupState.MissingInTimelog => "Missing in Timelog",
         DayGroupState.OnlyInTimelog    => "Only in Timelog",
         DayGroupState.Unmapped         => "Not comparable",
+        DayGroupState.Accepted         => "Accepted as-is",
         _                              => state.ToString(),
     };
 
@@ -711,6 +730,7 @@ else
         DayGroupState.Different        => Color.Warning,
         DayGroupState.MissingInTimelog => Color.Info,
         DayGroupState.OnlyInTimelog    => Color.Secondary,
+        DayGroupState.Accepted         => Color.Success,
         _                              => Color.Default,
     };
 
@@ -720,6 +740,7 @@ else
         DayGroupState.Different        => "var(--mud-palette-warning)",
         DayGroupState.MissingInTimelog => "var(--mud-palette-info)",
         DayGroupState.OnlyInTimelog    => "var(--mud-palette-secondary)",
+        DayGroupState.Accepted         => "var(--mud-palette-success)",
         _                              => "var(--mud-palette-lines-default)",
     };
 

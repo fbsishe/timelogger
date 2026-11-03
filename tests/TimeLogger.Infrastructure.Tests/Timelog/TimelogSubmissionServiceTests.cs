@@ -5,6 +5,7 @@ using Moq;
 using Refit;
 using System.Net;
 using TimeLogger.Application.Interfaces;
+using TimeLogger.Application.Services;
 using TimeLogger.Domain;
 using TimeLogger.Domain.Entities;
 using TimeLogger.Infrastructure.Persistence;
@@ -18,6 +19,7 @@ public class TimelogSubmissionServiceTests : IDisposable
     private readonly AppDbContext _db;
     private readonly Mock<ITimelogApiClient> _apiClientMock;
     private readonly Mock<ITimelogReportingClient> _reportingMock = new();
+    private readonly Mock<IAuditLogService> _auditLogMock = new();
     private readonly TimelogSubmissionService _sut;
 
     public TimelogSubmissionServiceTests()
@@ -43,6 +45,7 @@ public class TimelogSubmissionServiceTests : IDisposable
                 SubmitRetryCount = retryCount,
                 SubmitRetryBaseDelaySeconds = 0,
             }),
+            _auditLogMock.Object,
             NullLogger<TimelogSubmissionService>.Instance);
 
     private async Task<(ImportedEntry entry, TimelogTask task)> SeedEntryWithTaskAsync()
@@ -423,6 +426,61 @@ public class TimelogSubmissionServiceTests : IDisposable
         _apiClientMock.Verify(
             c => c.CreateTimeRegistrationAsync(It.IsAny<CreateTimeRegistrationDto>(), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData("4242")]                                  // API-detected (integer registration id)
+    [InlineData("6f1c2f8e-1d2b-4c1a-9a43-2b0d6f1e9a77")]  // local fallback (registration GUID)
+    public async Task ResolveConflictAsync_KeepExisting_LeavesTimelogUntouchedAndMarksSubmitted(string regId)
+    {
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        entry.Status = ImportStatus.Conflict;
+        entry.ConflictHoursInTimelog = 0.5;
+        entry.ConflictTimelogRegistrationId = regId;
+        await _db.SaveChangesAsync();
+
+        var outcome = await _sut.ResolveConflictAsync(entry, ConflictResolution.KeepExisting);
+
+        Assert.Equal(SubmitOutcome.Succeeded, outcome);
+        Assert.Empty(_apiClientMock.Invocations);
+        Assert.Equal(ImportStatus.Submitted, entry.Status);
+        Assert.Null(entry.ConflictHoursInTimelog);
+        Assert.Null(entry.ConflictTimelogRegistrationId);
+
+        var audit = await _db.SubmittedEntries.SingleAsync(s => s.ImportedEntryId == entry.Id);
+        Assert.Equal(SubmissionStatus.KeptExisting, audit.Status);
+        Assert.Equal(regId, audit.ExternalId);
+
+        _auditLogMock.Verify(a => a.LogAsync(
+            "Conflict", "KeptTimelog", It.IsAny<string?>(),
+            It.Is<string?>(d => d!.Contains(regId) && d.Contains("0.5h") && d.Contains("ours was 2h")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveConflictAsync_KeepExisting_UpdatesExistingAuditRecord()
+    {
+        var (entry, _) = await SeedEntryWithTaskAsync();
+        entry.Status = ImportStatus.Conflict;
+        entry.ConflictHoursInTimelog = 0.5;
+        entry.ConflictTimelogRegistrationId = "4242";
+        _db.SubmittedEntries.Add(new SubmittedEntry
+        {
+            ImportedEntryId = entry.Id,
+            ExternalId = "old-guid",
+            Status = SubmissionStatus.Failed,
+            ErrorMessage = "boom",
+            SubmittedAt = DateTimeOffset.UtcNow.AddDays(-1),
+            AttemptCount = 3,
+        });
+        await _db.SaveChangesAsync();
+
+        await _sut.ResolveConflictAsync(entry, ConflictResolution.KeepExisting);
+
+        var audit = await _db.SubmittedEntries.SingleAsync(s => s.ImportedEntryId == entry.Id);
+        Assert.Equal(SubmissionStatus.KeptExisting, audit.Status);
+        Assert.Equal("4242", audit.ExternalId);
+        Assert.Null(audit.ErrorMessage);
     }
 
     public void Dispose() => _db.Dispose();

@@ -23,6 +23,12 @@ public enum SubmissionStatus
     Retrying = 3,
     Acknowledged = 4,
     Duplicate = 5,
+
+    /// <summary>
+    /// A conflict resolved by accepting what is already in Timelog — nothing was written.
+    /// Used when the period is closed and the registration was fixed by hand.
+    /// </summary>
+    KeptExisting = 6,
 }
 
 public enum ConflictResolution
@@ -30,6 +36,9 @@ public enum ConflictResolution
     UseOurs = 1,
     AddToExisting = 2,
     SetCustom = 3,
+
+    /// <summary>Leave the Timelog registration untouched and close the conflict.</summary>
+    KeepExisting = 4,
 }
 
 public enum MatchOperator

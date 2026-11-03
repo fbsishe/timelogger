@@ -102,4 +102,22 @@ public class SubmissionPageTests : BunitContext, IAsyncLifetime
         Assert.Contains("Recent Submission History", cut.Markup);
         Assert.Contains("PROJ-1", cut.Markup);
     }
+
+    [Fact]
+    public async Task ShowsKeptTimelogLabel_ForAcceptedConflicts()
+    {
+        var history = new List<SubmissionHistoryItem>
+        {
+            new(1, "AFL-49", "AFL", "Featureavstämning", new DateOnly(2026, 10, 30),
+                1.0, "Rely Tempo", "Dev User", SubmissionStatus.KeptExisting,
+                DateTimeOffset.UtcNow.AddHours(-1), 1, null),
+        };
+        _submissionServiceMock.Setup(s => s.GetRecentAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(history);
+
+        var cut = Render<Submission>();
+        await cut.InvokeAsync(() => Task.CompletedTask);
+
+        Assert.Contains("Kept Timelog", cut.Markup);
+        Assert.DoesNotContain(">KeptExisting<", cut.Markup);
+    }
 }
